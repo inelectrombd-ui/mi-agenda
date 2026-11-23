@@ -17,7 +17,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
 
   final _tituloCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
-  
+
   DateTime? _fechaNotaSeleccionada = DateTime.now();
   TimeOfDay? _horaAlarmaSeleccionada;
   String _prioridadSeleccionada = 'normal';
@@ -55,7 +55,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
         .listen((datos) {
       if (mounted) {
         setState(() {
-          _todosLosPendientes = datos;
+          _todosLosPendientes = List<Map<String, dynamic>>.from(datos);
         });
         _verificarAlarmas();
       }
@@ -76,7 +76,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
 
         if (fechaAlarma.isBefore(ahora) || fechaAlarma.isAtSameMomentAs(ahora)) {
           vencidosSinAtender++;
-          final String id = item['id'];
+          final String id = item['id'].toString();
 
           if (!notificada && !_alarmasEnPantalla.contains(id)) {
             _dispararAlertaCompleta(item);
@@ -92,7 +92,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     }
   }
   void _dispararAlertaCompleta(Map<String, dynamic> item) {
-    final String id = item['id'];
+    final String id = item['id'].toString();
     final String titulo = item['titulo'] ?? 'Pendiente';
     final String desc = item['descripcion'] ?? '';
     final bool urgente = item['prioridad'] == 'urgente';
@@ -123,10 +123,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
         onCompletar: () async {
           _detenerAlertaLocal(id);
           Navigator.of(ctx).pop();
-          await SupabaseService.client
-              .from('pendientes')
-              .update({'completada': true, 'notificada': true})
-              .eq('id', id);
+          await _alternarCompletada(id, true);
         },
         onPosponer: (minutos) async {
           _detenerAlertaLocal(id);
@@ -159,6 +156,50 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       _repetidorSonido?.cancel();
     }
   }
+  Future<void> _alternarCompletada(String id, bool nuevoEstado) async {
+    // 1. Respuesta visual inmediata en pantalla (0 ms)
+    setState(() {
+      final index = _todosLosPendientes.indexWhere((e) => e['id'].toString() == id);
+      if (index != -1) {
+        _todosLosPendientes[index] = {
+          ..._todosLosPendientes[index],
+          'completada': nuevoEstado,
+          if (nuevoEstado) 'notificada': true,
+        };
+      }
+    });
+
+    // 2. Sincronizar con Supabase en segundo plano
+    await SupabaseService.client
+        .from('pendientes')
+        .update({
+          'completada': nuevoEstado,
+          if (nuevoEstado) 'notificada': true,
+        })
+        .eq('id', id);
+  }
+
+  Future<void> _eliminarPendiente(String id) async {
+    // 1. Quitar de la lista en pantalla al instante
+    setState(() {
+      _todosLosPendientes.removeWhere((e) => e['id'].toString() == id);
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nota eliminada'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+
+    // 2. Eliminar de Supabase
+    await SupabaseService.client.from('pendientes').delete().eq('id', id);
+  }
+
   Future<void> _guardarNotaRapida() async {
     final titulo = _tituloCtrl.text.trim();
     if (titulo.isEmpty) return;
@@ -236,11 +277,11 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
   Color _colorPrioridad(String? prioridad) {
     switch (prioridad) {
       case 'urgente':
-        return Colors.redAccent;
+        return const Color(0xFFDC2626);
       case 'baja':
-        return Colors.tealAccent;
+        return const Color(0xFF0D9488);
       default:
-        return const Color(0xFF38BDF8);
+        return const Color(0xFF0284C7);
     }
   }
   @override
@@ -252,21 +293,23 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     final eventosDelDia = _obtenerEventosDelDia(_selectedDay);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
+      backgroundColor: const Color(0xFFF1F5F9),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1E293B),
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.white,
+        foregroundColor: const Color(0xFF0F172A),
+        elevation: 1,
+        shadowColor: Colors.black12,
         title: const Row(
           children: [
-            Icon(Icons.calendar_month_rounded, color: Color(0xFF38BDF8)),
+            Icon(Icons.calendar_month_rounded, color: Color(0xFF0284C7)),
             SizedBox(width: 10),
-            Text('Mi Agenda Interactiva', style: TextStyle(fontWeight: FontWeight.bold)),
+            Text('Mi Agenda Interactiva', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
           ],
         ),
         actions: [
           IconButton(
             tooltip: 'Probar sonido y notificación',
-            icon: const Icon(Icons.notifications_active_outlined, color: Colors.amberAccent),
+            icon: const Icon(Icons.notifications_active_outlined, color: Color(0xFFD97706)),
             onPressed: () async {
               await SupabaseService.pedirPermisoPush();
               SupabaseService.sonarAlarma(urgente: false);
@@ -278,7 +321,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
           ),
           IconButton(
             tooltip: 'Cerrar sesión',
-            icon: const Icon(Icons.logout_rounded),
+            icon: const Icon(Icons.logout_rounded, color: Color(0xFF475569)),
             onPressed: () => SupabaseService.client.auth.signOut(),
           ),
         ],
@@ -311,9 +354,16 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E293B),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: TableCalendar(
         firstDay: DateTime.utc(2024, 1, 1),
@@ -323,28 +373,29 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
         eventLoader: _obtenerEventosDelDia,
         startingDayOfWeek: StartingDayOfWeek.monday,
         calendarStyle: CalendarStyle(
-          defaultTextStyle: const TextStyle(color: Colors.white),
-          weekendTextStyle: const TextStyle(color: Colors.white70),
-          outsideTextStyle: const TextStyle(color: Colors.white24),
+          defaultTextStyle: const TextStyle(color: Color(0xFF1E293B)),
+          weekendTextStyle: const TextStyle(color: Color(0xFF64748B)),
+          outsideTextStyle: const TextStyle(color: Color(0xFFCBD5E1)),
           todayDecoration: BoxDecoration(
-            color: const Color(0xFF0284C7).withValues(alpha: 0.4),
+            color: const Color(0xFF0284C7).withValues(alpha: 0.2),
             shape: BoxShape.circle,
           ),
+          todayTextStyle: const TextStyle(color: Color(0xFF0284C7), fontWeight: FontWeight.bold),
           selectedDecoration: const BoxDecoration(
-            color: Color(0xFF38BDF8),
+            color: Color(0xFF0284C7),
             shape: BoxShape.circle,
           ),
           markerDecoration: const BoxDecoration(
-            color: Colors.amberAccent,
+            color: Color(0xFFD97706),
             shape: BoxShape.circle,
           ),
         ),
         headerStyle: const HeaderStyle(
           formatButtonVisible: false,
           titleCentered: true,
-          titleTextStyle: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-          leftChevronIcon: Icon(Icons.chevron_left, color: Colors.white),
-          rightChevronIcon: Icon(Icons.chevron_right, color: Colors.white),
+          titleTextStyle: TextStyle(color: Color(0xFF0F172A), fontSize: 18, fontWeight: FontWeight.bold),
+          leftChevronIcon: Icon(Icons.chevron_left, color: Color(0xFF0F172A)),
+          rightChevronIcon: Icon(Icons.chevron_right, color: Color(0xFF0F172A)),
         ),
         onDaySelected: (selectedDay, focusedDay) {
           setState(() {
@@ -376,41 +427,62 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E293B),
+            color: Colors.white,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.4)),
+            border: Border.all(color: const Color(0xFFBAE6FD), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
                 '⚡ Nota Rápida / Nuevo Pendiente',
-                style: TextStyle(color: Color(0xFF38BDF8), fontWeight: FontWeight.bold, fontSize: 16),
+                style: TextStyle(color: Color(0xFF0284C7), fontWeight: FontWeight.bold, fontSize: 16),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _tituloCtrl,
                 onSubmitted: (_) => _guardarNotaRapida(),
-                style: const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Color(0xFF0F172A)),
                 decoration: InputDecoration(
                   hintText: '¿Qué tienes pendiente?',
-                  hintStyle: const TextStyle(color: Colors.white38),
+                  hintStyle: const TextStyle(color: Color(0xFF94A3B8)),
                   filled: true,
-                  fillColor: const Color(0xFF0F172A),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: _descCtrl,
-                style: const TextStyle(color: Colors.white70, fontSize: 13),
+                style: const TextStyle(color: Color(0xFF334155), fontSize: 13),
                 decoration: InputDecoration(
                   hintText: 'Detalles opcionales...',
-                  hintStyle: const TextStyle(color: Colors.white24),
+                  hintStyle: const TextStyle(color: Color(0xFF94A3B8)),
                   filled: true,
-                  fillColor: const Color(0xFF0F172A),
+                  fillColor: const Color(0xFFF8FAFC),
                   isDense: true,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
@@ -419,15 +491,15 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                 runSpacing: 8,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  // Selector de Fecha (Independiente)
                   ActionChip(
-                    avatar: const Icon(Icons.event, size: 18, color: Color(0xFF38BDF8)),
-                    backgroundColor: const Color(0xFF0F172A),
+                    avatar: const Icon(Icons.event, size: 18, color: Color(0xFF0284C7)),
+                    backgroundColor: const Color(0xFFF1F5F9),
+                    side: const BorderSide(color: Color(0xFFCBD5E1)),
                     label: Text(
                       _fechaNotaSeleccionada == null
                           ? 'Sin fecha'
                           : DateFormat('dd/MM/yyyy').format(_fechaNotaSeleccionada!),
-                      style: const TextStyle(color: Colors.white),
+                      style: const TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w500),
                     ),
                     onPressed: _elegirSoloFecha,
                   ),
@@ -438,25 +510,29 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                         _horaAlarmaSeleccionada = null;
                       }),
                       child: const Padding(
-                        padding: EdgeInsets.all(4.0),
-                        child: Icon(Icons.cancel, size: 18, color: Colors.white38),
+                        padding: EdgeInsets.all(6.0),
+                        child: Icon(Icons.cancel, size: 20, color: Color(0xFF94A3B8)),
                       ),
                     ),
 
-                  // Selector de Alarma (Opcional)
                   ActionChip(
                     avatar: Icon(
                       _horaAlarmaSeleccionada == null ? Icons.alarm_off : Icons.alarm_on,
                       size: 18,
-                      color: _horaAlarmaSeleccionada == null ? Colors.white54 : Colors.amberAccent,
+                      color: _horaAlarmaSeleccionada == null ? const Color(0xFF64748B) : const Color(0xFFD97706),
                     ),
-                    backgroundColor: const Color(0xFF0F172A),
+                    backgroundColor: _horaAlarmaSeleccionada == null
+                        ? const Color(0xFFF1F5F9)
+                        : const Color(0xFFFEF3C7),
+                    side: BorderSide(
+                      color: _horaAlarmaSeleccionada == null ? const Color(0xFFCBD5E1) : const Color(0xFFF59E0B),
+                    ),
                     label: Text(
                       _horaAlarmaSeleccionada == null
                           ? 'Alarma (Opcional)'
                           : _horaAlarmaSeleccionada!.format(context),
                       style: TextStyle(
-                        color: _horaAlarmaSeleccionada == null ? Colors.white70 : Colors.amberAccent,
+                        color: _horaAlarmaSeleccionada == null ? const Color(0xFF334155) : const Color(0xFFB45309),
                         fontWeight: _horaAlarmaSeleccionada == null ? FontWeight.normal : FontWeight.bold,
                       ),
                     ),
@@ -466,15 +542,15 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                     InkWell(
                       onTap: () => setState(() => _horaAlarmaSeleccionada = null),
                       child: const Padding(
-                        padding: EdgeInsets.all(4.0),
-                        child: Icon(Icons.cancel, size: 18, color: Colors.white38),
+                        padding: EdgeInsets.all(6.0),
+                        child: Icon(Icons.cancel, size: 20, color: Color(0xFF94A3B8)),
                       ),
                     ),
 
                   DropdownButton<String>(
                     value: _prioridadSeleccionada,
-                    dropdownColor: const Color(0xFF0F172A),
-                    style: const TextStyle(color: Colors.white),
+                    dropdownColor: Colors.white,
+                    style: const TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w500),
                     underline: const SizedBox(),
                     items: const [
                       DropdownMenuItem(value: 'baja', child: Text('🟢 Baja')),
@@ -490,6 +566,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF0284C7),
                       foregroundColor: Colors.white,
+                      elevation: 0,
                     ),
                   ),
                 ],
@@ -514,36 +591,36 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
         if (_vistaSeleccionada == 0) ...[
           Text(
             '📅 Notas y Pendientes del ${DateFormat('dd/MM/yyyy').format(_selectedDay)}',
-            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            style: const TextStyle(color: Color(0xFF0F172A), fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           if (eventosDelDia.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 12),
-              child: Text('No hay notas programadas para este día.', style: TextStyle(color: Colors.white38)),
+              child: Text('No hay notas programadas para este día.', style: TextStyle(color: Color(0xFF64748B))),
             )
           else
             ...eventosDelDia.map((e) => _construirTarjetaPendiente(e)),
           const SizedBox(height: 20),
           Text(
             '📌 Notas Rápidas sin fecha (${notasSinFecha.length})',
-            style: const TextStyle(color: Colors.amberAccent, fontSize: 16, fontWeight: FontWeight.bold),
+            style: const TextStyle(color: Color(0xFFD97706), fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           if (notasSinFecha.isEmpty)
-            const Text('Tu bandeja de notas sin fecha está limpia.', style: TextStyle(color: Colors.white38))
+            const Text('Tu bandeja de notas sin fecha está limpia.', style: TextStyle(color: Color(0xFF64748B)))
           else
             ...notasSinFecha.map((e) => _construirTarjetaPendiente(e)),
         ] else if (_vistaSeleccionada == 1) ...[
           const Text(
             '⏳ Historial Global de Pendientes Activas',
-            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            style: TextStyle(color: Color(0xFF0F172A), fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           if (todasPendientes.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
-              child: Text('¡Excelente! No tienes ninguna tarea pendiente.', style: TextStyle(color: Colors.white38)),
+              child: Text('¡Excelente! No tienes ninguna tarea pendiente.', style: TextStyle(color: Color(0xFF64748B))),
             )
           else
             ...todasPendientes.map((e) => _construirTarjetaPendiente(e, mostrarFechaCompleta: true)),
@@ -553,20 +630,23 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
             children: [
               const Text(
                 '✅ Historial de Notas Realizadas',
-                style: TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.bold),
+                style: TextStyle(color: Color(0xFF16A34A), fontSize: 16, fontWeight: FontWeight.bold),
               ),
               if (todasRealizadas.isNotEmpty)
                 TextButton.icon(
                   onPressed: () async {
                     final userId = SupabaseService.client.auth.currentUser!.id;
+                    setState(() {
+                      _todosLosPendientes.removeWhere((e) => (e['completada'] ?? false));
+                    });
                     await SupabaseService.client
                         .from('pendientes')
                         .delete()
                         .eq('user_id', userId)
                         .eq('completada', true);
                   },
-                  icon: const Icon(Icons.delete_sweep, size: 18, color: Colors.redAccent),
-                  label: const Text('Vaciar historial', style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                  icon: const Icon(Icons.delete_sweep, size: 18, color: Color(0xFFDC2626)),
+                  label: const Text('Vaciar historial', style: TextStyle(color: Color(0xFFDC2626), fontSize: 12)),
                 ),
             ],
           ),
@@ -574,7 +654,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
           if (todasRealizadas.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
-              child: Text('Aún no has marcado notas como realizadas.', style: TextStyle(color: Colors.white38)),
+              child: Text('Aún no has marcado notas como realizadas.', style: TextStyle(color: Color(0xFF64748B))),
             )
           else
             ...todasRealizadas.map((e) => _construirTarjetaPendiente(e, mostrarFechaCompleta: true)),
@@ -590,24 +670,25 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       label: Text(
         texto,
         style: TextStyle(
-          color: activa ? Colors.white : Colors.white70,
-          fontWeight: activa ? FontWeight.bold : FontWeight.normal,
+          color: activa ? Colors.white : const Color(0xFF334155),
+          fontWeight: activa ? FontWeight.bold : FontWeight.w500,
         ),
       ),
       selected: activa,
       selectedColor: const Color(0xFF0284C7),
-      backgroundColor: const Color(0xFF1E293B),
-      side: BorderSide(color: activa ? const Color(0xFF38BDF8) : Colors.white12),
+      backgroundColor: Colors.white,
+      side: BorderSide(color: activa ? const Color(0xFF0284C7) : const Color(0xFFCBD5E1)),
       onSelected: (_) => setState(() => _vistaSeleccionada = indice),
     );
   }
 
   Widget _construirTarjetaPendiente(Map<String, dynamic> item, {bool mostrarFechaCompleta = false}) {
+    final String id = item['id'].toString();
     final bool completada = item['completada'] ?? false;
     final bool tieneAlarma = item['tiene_alarma'] ?? false;
     final String? fechaStr = item['fecha_alarma'];
     final fechaLocal = fechaStr != null ? DateTime.parse(fechaStr).toLocal() : null;
-    final colorBorde = completada ? Colors.green : _colorPrioridad(item['prioridad']);
+    final colorBorde = completada ? const Color(0xFF16A34A) : _colorPrioridad(item['prioridad']);
 
     String textoSubtituloFecha;
     IconData iconoFecha;
@@ -625,61 +706,110 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     }
 
     return Container(
+      key: ValueKey(id),
       margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E293B),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border(left: BorderSide(color: colorBorde, width: 5)),
-      ),
-      child: ListTile(
-        leading: Checkbox(
-          value: completada,
-          activeColor: Colors.green,
-          onChanged: (val) async {
-            await SupabaseService.client
-                .from('pendientes')
-                .update({'completada': val ?? false})
-                .eq('id', item['id']);
-          },
-        ),
-        title: Text(
-          item['titulo'] ?? '',
-          style: TextStyle(
-            color: completada ? Colors.white54 : Colors.white,
-            decoration: completada ? TextDecoration.lineThrough : null,
-            fontWeight: FontWeight.w600,
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (item['descripcion'] != null)
-              Text(item['descripcion'], style: const TextStyle(color: Colors.white60, fontSize: 12)),
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Row(
-                children: [
-                  Icon(iconoFecha, size: 14, color: tieneAlarma ? Colors.amberAccent : colorBorde),
-                  const SizedBox(width: 4),
-                  Text(
-                    textoSubtituloFecha,
-                    style: TextStyle(
-                      color: tieneAlarma ? Colors.amberAccent : colorBorde,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
+        ],
+      ),
+      child: Row(
+        children: [
+          // Franja lateral de color de prioridad
+          Container(
+            width: 5,
+            height: 48,
+            decoration: BoxDecoration(
+              color: colorBorde,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(width: 6),
+
+          // Botón Check táctil grande e instantáneo
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(24),
+              onTap: () => _alternarCompletada(id, !completada),
+              child: Padding(
+                padding: const EdgeInsets.all(10.0),
+                child: Icon(
+                  completada ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                  color: completada ? const Color(0xFF16A34A) : const Color(0xFF94A3B8),
+                  size: 28,
+                ),
               ),
             ),
-          ],
-        ),
-        trailing: IconButton(
-          icon: const Icon(Icons.delete_outline, color: Colors.white38),
-          onPressed: () async {
-            await SupabaseService.client.from('pendientes').delete().eq('id', item['id']);
-          },
-        ),
+          ),
+          const SizedBox(width: 6),
+
+          // Contenido de texto (Título, detalles y fecha/alarma)
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item['titulo'] ?? '',
+                  style: TextStyle(
+                    color: completada ? const Color(0xFF94A3B8) : const Color(0xFF0F172A),
+                    decoration: completada ? TextDecoration.lineThrough : null,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                ),
+                if (item['descripcion'] != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    item['descripcion'],
+                    style: const TextStyle(color: Color(0xFF475569), fontSize: 12),
+                  ),
+                ],
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(
+                      iconoFecha,
+                      size: 14,
+                      color: tieneAlarma ? const Color(0xFFD97706) : colorBorde,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      textoSubtituloFecha,
+                      style: TextStyle(
+                        color: tieneAlarma ? const Color(0xFFB45309) : colorBorde,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // Botón Eliminar táctil grande e instantáneo
+          Material(
+            color: const Color(0xFFFEF2F2),
+            borderRadius: BorderRadius.circular(10),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => _eliminarPendiente(id),
+              child: const Padding(
+                padding: EdgeInsets.all(10.0),
+                child: Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 22),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -719,13 +849,13 @@ class _ModalAlarmaInteractivaState extends State<_ModalAlarmaInteractiva> with S
   @override
   Widget build(BuildContext context) {
     final urgente = widget.item['prioridad'] == 'urgente';
-    final colorBase = urgente ? Colors.redAccent : const Color(0xFF38BDF8);
+    final colorBase = urgente ? const Color(0xFFDC2626) : const Color(0xFF0284C7);
 
     return AnimatedBuilder(
       animation: _animCtrl,
       builder: (context, child) {
         return AlertDialog(
-          backgroundColor: const Color(0xFF1E293B),
+          backgroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
             side: BorderSide(
@@ -751,11 +881,11 @@ class _ModalAlarmaInteractivaState extends State<_ModalAlarmaInteractiva> with S
             children: [
               Text(
                 widget.item['titulo'] ?? '',
-                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                style: const TextStyle(color: Color(0xFF0F172A), fontSize: 20, fontWeight: FontWeight.bold),
               ),
               if (widget.item['descripcion'] != null) ...[
                 const SizedBox(height: 8),
-                Text(widget.item['descripcion'], style: const TextStyle(color: Colors.white70, fontSize: 15)),
+                Text(widget.item['descripcion'], style: const TextStyle(color: Color(0xFF475569), fontSize: 15)),
               ],
             ],
           ),
@@ -763,26 +893,26 @@ class _ModalAlarmaInteractivaState extends State<_ModalAlarmaInteractiva> with S
           actions: [
             TextButton(
               onPressed: widget.onSilenciar,
-              child: const Text('Silenciar', style: TextStyle(color: Colors.white54)),
+              child: const Text('Silenciar', style: TextStyle(color: Color(0xFF64748B))),
             ),
             Wrap(
               spacing: 8,
               children: [
                 OutlinedButton(
                   onPressed: () => widget.onPosponer(5),
-                  style: OutlinedButton.styleFrom(foregroundColor: Colors.amberAccent),
+                  style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFD97706)),
                   child: const Text('+5 min'),
                 ),
                 OutlinedButton(
                   onPressed: () => widget.onPosponer(15),
-                  style: OutlinedButton.styleFrom(foregroundColor: Colors.amberAccent),
+                  style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFD97706)),
                   child: const Text('+15 min'),
                 ),
                 ElevatedButton.icon(
                   onPressed: widget.onCompletar,
                   icon: const Icon(Icons.check_circle),
                   label: const Text('Completar'),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF16A34A), foregroundColor: Colors.white),
                 ),
               ],
             ),

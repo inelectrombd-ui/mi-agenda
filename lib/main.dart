@@ -18,7 +18,13 @@ class MiAgendaApp extends StatelessWidget {
     return MaterialApp(
       title: 'Mi Agenda Personal',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(useMaterial3: true),
+      theme: ThemeData.light(useMaterial3: true).copyWith(
+        scaffoldBackgroundColor: const Color(0xFFF1F5F9),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0284C7),
+          brightness: Brightness.light,
+        ),
+      ),
       home: StreamBuilder<AuthState>(
         stream: SupabaseService.client.auth.onAuthStateChange,
         builder: (context, snapshot) {
