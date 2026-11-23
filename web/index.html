@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="mi_agenda">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>mi_agenda</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <!--
+    You can customize the "flutter_bootstrap.js" script.
+    This is useful to provide a custom configuration to the Flutter loader
+    or to give the user feedback during the initialization process.
+
+    For more details:
+    * https://docs.flutter.dev/platform-integration/web/initialization
+  -->
+  <script src="flutter_bootstrap.js" async></script>
+
+    <script>
+    // 1. Solicitar permiso de notificaciones push
+    window.solicitarPermisoNotificacion = async function() {
+      if (!("Notification" in window)) return "unsupported";
+      if (Notification.permission === "granted") return "granted";
+      const permission = await Notification.requestPermission();
+      return permission;
+    };
+
+    // 2. Disparar notificación push nativa del sistema
+    window.mostrarNotificacionPush = function(titulo, cuerpo) {
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification(titulo, {
+          body: cuerpo,
+          tag: "agenda-alarma"
+        });
+      }
+    };
+
+    // 3. Generador de sonido limpio tipo campana/marimba (Web Audio API)
+    window.reproducirSonidoAlarma = function(urgente) {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const ctx = new AudioCtx();
+        const notas = urgente ? [880, 1108.73, 1318.51, 880] : [523.25, 659.25, 783.99];
+        
+        notas.forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = urgente ? 'triangle' : 'sine';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.18);
+          
+          gain.gain.setValueAtTime(0.001, ctx.currentTime + i * 0.18);
+          gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + i * 0.18 + 0.03);
+          gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + i * 0.18 + 0.55);
+          
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(ctx.currentTime + i * 0.18);
+          osc.stop(ctx.currentTime + i * 0.18 + 0.6);
+        });
+      } catch (e) {
+        console.warn("Audio bloqueado hasta interacción:", e);
+      }
+    };
+
+    // 4. Cambiar título de la pestaña para alerta visual
+    window.actualizarTituloPestana = function(texto) {
+      document.title = texto;
+    };
+  </script>
+</body>
+
+
+</html>
