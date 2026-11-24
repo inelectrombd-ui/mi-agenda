@@ -10,12 +10,21 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _emailCtrl = TextEditingController(text: 'inelectrombd@gmail.com');
+  final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
+  bool _esRegistro = false;
   bool _cargando = false;
   String? _error;
 
-  Future<void> _iniciarSesion() async {
+  Future<void> _procesarAcceso() async {
+    final email = _emailCtrl.text.trim();
+    final password = _passCtrl.text.trim();
+
+    if (email.isEmpty || password.length < 6) {
+      setState(() => _error = 'Ingresa un correo válido y contraseña de al menos 6 caracteres.');
+      return;
+    }
+
     setState(() {
       _cargando = true;
       _error = null;
@@ -26,14 +35,31 @@ class _LoginPageState extends State<LoginPage> {
       SupabaseService.sonarAlarma(urgente: false);
       await SupabaseService.pedirPermisoPush();
 
-      await SupabaseService.client.auth.signInWithPassword(
-        email: _emailCtrl.text.trim(),
-        password: _passCtrl.text.trim(),
-      );
+      if (_esRegistro) {
+        // 1. Crear cuenta nueva
+        final res = await SupabaseService.client.auth.signUp(
+          email: email,
+          password: password,
+        );
+
+        // 2. Si Supabase no devolvió sesión activa automáticamente, iniciamos sesión al instante
+        if (res.session == null) {
+          await SupabaseService.client.auth.signInWithPassword(
+            email: email,
+            password: password,
+          );
+        }
+      } else {
+        // Iniciar sesión con cuenta existente
+        await SupabaseService.client.auth.signInWithPassword(
+          email: email,
+          password: password,
+        );
+      }
     } on AuthException catch (e) {
-      setState(() => _error = 'Error de acceso: ${e.message}');
+      setState(() => _error = 'Error: ${e.message}');
     } catch (e) {
-      setState(() => _error = 'Ocurrió un error inesperado.');
+      setState(() => _error = 'Ocurrió un error inesperado al conectar.');
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -45,7 +71,7 @@ class _LoginPageState extends State<LoginPage> {
       backgroundColor: const Color(0xFFF1F5F9),
       body: Center(
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 400),
+          constraints: const BoxConstraints(maxWidth: 420),
           padding: const EdgeInsets.all(32),
           margin: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -64,17 +90,64 @@ class _LoginPageState extends State<LoginPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.event_available_rounded, size: 56, color: Color(0xFF0284C7)),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               const Text(
-                'Mi Agenda Personal',
+                'Mi Agenda Interactiva',
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 6),
+              Text(
+                _esRegistro ? 'Crea tu cuenta personal gratis' : 'Inicia sesión para ver tus pendientes',
+                style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+              ),
+              const SizedBox(height: 20),
+
+              // Selector Iniciar Sesión / Crear Cuenta
+              Row(
+                children: [
+                  Expanded(
+                    child: ChoiceChip(
+                      label: const Center(child: Text('Iniciar Sesión')),
+                      selected: !_esRegistro,
+                      selectedColor: const Color(0xFF0284C7),
+                      backgroundColor: const Color(0xFFF1F5F9),
+                      labelStyle: TextStyle(
+                        color: !_esRegistro ? Colors.white : const Color(0xFF334155),
+                        fontWeight: FontWeight.bold,
+                      ),
+                      onSelected: (_) => setState(() {
+                        _esRegistro = false;
+                        _error = null;
+                      }),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ChoiceChip(
+                      label: const Center(child: Text('Crear Cuenta')),
+                      selected: _esRegistro,
+                      selectedColor: const Color(0xFF0284C7),
+                      backgroundColor: const Color(0xFFF1F5F9),
+                      labelStyle: TextStyle(
+                        color: _esRegistro ? Colors.white : const Color(0xFF334155),
+                        fontWeight: FontWeight.bold,
+                      ),
+                      onSelected: (_) => setState(() {
+                        _esRegistro = true;
+                        _error = null;
+                      }),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
               TextField(
                 controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
                 style: const TextStyle(color: Color(0xFF0F172A)),
                 decoration: InputDecoration(
-                  labelText: 'Correo',
+                  labelText: 'Correo electrónico',
                   labelStyle: const TextStyle(color: Color(0xFF475569)),
                   prefixIcon: const Icon(Icons.email_outlined, color: Color(0xFF0284C7)),
                   filled: true,
@@ -93,10 +166,10 @@ class _LoginPageState extends State<LoginPage> {
               TextField(
                 controller: _passCtrl,
                 obscureText: true,
-                onSubmitted: (_) => _iniciarSesion(),
+                onSubmitted: (_) => _procesarAcceso(),
                 style: const TextStyle(color: Color(0xFF0F172A)),
                 decoration: InputDecoration(
-                  labelText: 'Contraseña',
+                  labelText: 'Contraseña (mínimo 6 caracteres)',
                   labelStyle: const TextStyle(color: Color(0xFF475569)),
                   prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF0284C7)),
                   filled: true,
@@ -120,7 +193,7 @@ class _LoginPageState extends State<LoginPage> {
                 width: double.infinity,
                 height: 48,
                 child: ElevatedButton(
-                  onPressed: _cargando ? null : _iniciarSesion,
+                  onPressed: _cargando ? null : _procesarAcceso,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF0284C7),
                     foregroundColor: Colors.white,
@@ -133,7 +206,10 @@ class _LoginPageState extends State<LoginPage> {
                           width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
-                      : const Text('Entrar a mi Agenda', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      : Text(
+                          _esRegistro ? 'Registrarme y Entrar' : 'Entrar a mi Agenda',
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
                 ),
               ),
             ],

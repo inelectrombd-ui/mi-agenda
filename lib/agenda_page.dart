@@ -28,10 +28,16 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
   Timer? _relojAlarmas;
   Timer? _repetidorSonido;
   final Set<String> _alarmasEnPantalla = {};
+
+  List<Map<String, dynamic>> _usuariosRegistrados = [];
+  bool get _esAdmin => SupabaseService.client.auth.currentUser?.email == 'inelectrombd@gmail.com';
   @override
   void initState() {
     super.initState();
     _escucharPendientesEnTiempoReal();
+    if (_esAdmin) {
+      _cargarUsuariosAdmin();
+    }
     _relojAlarmas = Timer.periodic(const Duration(seconds: 3), (_) => _verificarAlarmas());
   }
 
@@ -45,6 +51,76 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     super.dispose();
   }
 
+  Future<void> _cargarUsuariosAdmin() async {
+    try {
+      final datos = await SupabaseService.client
+          .from('perfiles_usuarios')
+          .select()
+          .order('fecha_registro', ascending: false);
+      if (mounted) {
+        setState(() {
+          _usuariosRegistrados = List<Map<String, dynamic>>.from(datos);
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _mostrarPanelAdmin() {
+    _cargarUsuariosAdmin();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.admin_panel_settings_rounded, color: Color(0xFF0284C7), size: 28),
+            const SizedBox(width: 10),
+            Text(
+              'Usuarios Activos (${_usuariosRegistrados.length})',
+              style: const TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 360,
+          child: _usuariosRegistrados.isEmpty
+              ? const Text('No se encontraron registros.', style: TextStyle(color: Color(0xFF64748B)))
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _usuariosRegistrados.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+
+                  itemBuilder: (_, i) {
+                    final u = _usuariosRegistrados[i];
+                    final fecha = DateTime.parse(u['fecha_registro']).toLocal();
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const CircleAvatar(
+                        backgroundColor: Color(0xFFE0F2FE),
+                        child: Icon(Icons.person, color: Color(0xFF0284C7), size: 20),
+                      ),
+                      title: Text(
+                        u['email'] ?? '',
+                        style: const TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600, fontSize: 14),
+                      ),
+                      subtitle: Text(
+                        'Registro: ${DateFormat('dd/MM/yyyy HH:mm').format(fecha)}',
+                        style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cerrar', style: TextStyle(color: Color(0xFF0284C7), fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
   void _escucharPendientesEnTiempoReal() {
     final userId = SupabaseService.client.auth.currentUser!.id;
     _realtimeSub = SupabaseService.client
@@ -61,6 +137,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       }
     });
   }
+
   void _verificarAlarmas() {
     final ahora = DateTime.now();
     int vencidosSinAtender = 0;
@@ -157,7 +234,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     }
   }
   Future<void> _alternarCompletada(String id, bool nuevoEstado) async {
-    // 1. Respuesta visual inmediata en pantalla (0 ms)
     setState(() {
       final index = _todosLosPendientes.indexWhere((e) => e['id'].toString() == id);
       if (index != -1) {
@@ -169,7 +245,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       }
     });
 
-    // 2. Sincronizar con Supabase en segundo plano
     await SupabaseService.client
         .from('pendientes')
         .update({
@@ -180,7 +255,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
   }
 
   Future<void> _eliminarPendiente(String id) async {
-    // 1. Quitar de la lista en pantalla al instante
     setState(() {
       _todosLosPendientes.removeWhere((e) => e['id'].toString() == id);
     });
@@ -196,7 +270,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       );
     }
 
-    // 2. Eliminar de Supabase
     await SupabaseService.client.from('pendientes').delete().eq('id', id);
   }
 
@@ -234,7 +307,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
 
     await SupabaseService.client.from('pendientes').insert(data);
   }
-
   Future<void> _elegirSoloFecha() async {
     final fecha = await showDatePicker(
       context: context,
@@ -302,11 +374,36 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
         title: const Row(
           children: [
             Icon(Icons.calendar_month_rounded, color: Color(0xFF0284C7)),
-            SizedBox(width: 10),
-            Text('Mi Agenda Interactiva', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Mi Agenda Interactiva',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
           ],
         ),
         actions: [
+          if (_esAdmin)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+              child: ActionChip(
+                avatar: const Icon(Icons.group_rounded, size: 18, color: Color(0xFF0284C7)),
+                backgroundColor: const Color(0xFFE0F2FE),
+                side: const BorderSide(color: Color(0xFFBAE6FD)),
+                label: Text(
+                  '${_usuariosRegistrados.length}',
+                  style: const TextStyle(
+                    color: Color(0xFF0284C7),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                tooltip: 'Ver usuarios registrados',
+                onPressed: _mostrarPanelAdmin,
+              ),
+            ),
           IconButton(
             tooltip: 'Probar sonido y notificación',
             icon: const Icon(Icons.notifications_active_outlined, color: Color(0xFFD97706)),
@@ -349,7 +446,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       ),
     );
   }
-
   Widget _construirPanelCalendario() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -514,7 +610,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                         child: Icon(Icons.cancel, size: 20, color: Color(0xFF94A3B8)),
                       ),
                     ),
-
                   ActionChip(
                     avatar: Icon(
                       _horaAlarmaSeleccionada == null ? Icons.alarm_off : Icons.alarm_on,
@@ -546,7 +641,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                         child: Icon(Icons.cancel, size: 20, color: Color(0xFF94A3B8)),
                       ),
                     ),
-
                   DropdownButton<String>(
                     value: _prioridadSeleccionada,
                     dropdownColor: Colors.white,
@@ -723,7 +817,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       ),
       child: Row(
         children: [
-          // Franja lateral de color de prioridad
           Container(
             width: 5,
             height: 48,
@@ -733,8 +826,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
             ),
           ),
           const SizedBox(width: 6),
-
-          // Botón Check táctil grande e instantáneo
           Material(
             color: Colors.transparent,
             child: InkWell(
@@ -751,8 +842,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
             ),
           ),
           const SizedBox(width: 6),
-
-          // Contenido de texto (Título, detalles y fecha/alarma)
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -795,8 +884,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               ],
             ),
           ),
-
-          // Botón Eliminar táctil grande e instantáneo
           Material(
             color: const Color(0xFFFEF2F2),
             borderRadius: BorderRadius.circular(10),
