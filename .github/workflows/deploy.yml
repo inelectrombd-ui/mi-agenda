@@ -25,14 +25,13 @@ jobs:
         run: flutter pub get
 
       - name: Compilar Flutter Web para GitHub Pages
-        # IMPORTANTE: Reemplaza /mi-agenda/ con el nombre exacto de tu repositorio en GitHub
         run: flutter build web --release --base-href "/mi-agenda/"
 
       - name: Configurar GitHub Pages
         uses: actions/configure-pages@v5
 
       - name: Subir archivos compilados
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: build/web
 
