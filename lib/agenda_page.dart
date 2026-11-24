@@ -404,7 +404,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
 
                                 try {
                                   if (bytesImagenSeleccionada != null) {
-                                    // Si estamos editando y había una imagen anterior, borrarla de Storage
                                     if (idEditando != null) {
                                       final anterior = _anuncios.firstWhere(
                                         (a) => a['id'].toString() == idEditando,
@@ -425,7 +424,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                                     urlFinalImagen =
                                         SupabaseService.client.storage.from('banners').getPublicUrl(rutaArchivo);
                                   } else if (idEditando != null && urlImagenExistente == null) {
-                                    // Si el usuario quitó la imagen durante la edición, borrarla de Storage
                                     final anterior = _anuncios.firstWhere(
                                       (a) => a['id'].toString() == idEditando,
                                       orElse: () => {},
@@ -486,7 +484,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                             child: Row(
                               children: [
-                                // Flechas para subir / bajar orden
                                 Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
@@ -753,7 +750,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     await SupabaseService.client.from('pendientes').delete().eq('id', id);
   }
 
-    Future<void> _guardarNotaRapida() async {
+  Future<void> _guardarNotaRapida() async {
     final titulo = _tituloCtrl.text.trim();
     if (titulo.isEmpty) return;
 
@@ -784,18 +781,214 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       _prioridadSeleccionada = 'normal';
     });
 
-    await SupabaseService.client.from('pendientes').insert(data);
-
-    if (conAlarma && fechaFinal != null) {
+    if (conAlarma) {
       await SupabaseService.pedirPermisoPush();
-      SupabaseService.agendarEnCalendarioNativo(
-        titulo,
-        descripcion.isEmpty ? 'Recordatorio de Mi Agenda Interactiva' : descripcion,
-        fechaFinal.toUtc(),
-      );
     }
-  }
 
+    await SupabaseService.client.from('pendientes').insert(data);
+  }
+  void _mostrarEditorNota(Map<String, dynamic> item) {
+    final String id = item['id'].toString();
+    final editTitCtrl = TextEditingController(text: item['titulo'] ?? '');
+    final editDescCtrl = TextEditingController(text: item['descripcion'] ?? '');
+
+    final String? fechaStr = item['fecha_alarma'];
+    final DateTime? fechaExistente = fechaStr != null ? DateTime.parse(fechaStr).toLocal() : null;
+    final bool teniaAlarma = item['tiene_alarma'] ?? false;
+
+    DateTime? fechaEdit = fechaExistente;
+    TimeOfDay? horaEdit = (fechaExistente != null && teniaAlarma)
+        ? TimeOfDay(hour: fechaExistente.hour, minute: fechaExistente.minute)
+        : null;
+    String prioridadEdit = item['prioridad'] ?? 'normal';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateModal) {
+          return AlertDialog(
+            backgroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Row(
+              children: [
+                Icon(Icons.edit_note_rounded, color: Color(0xFF0284C7), size: 28),
+                SizedBox(width: 8),
+                Text(
+                  'Editar Nota / Pendiente',
+                  style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: editTitCtrl,
+                      textInputAction: TextInputAction.next,
+                      style: const TextStyle(color: Color(0xFF0F172A)),
+                      decoration: const InputDecoration(
+                        labelText: 'Título *',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: editDescCtrl,
+                      textInputAction: TextInputAction.done,
+                      style: const TextStyle(color: Color(0xFF334155)),
+                      decoration: const InputDecoration(
+                        labelText: 'Detalles opcionales',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        ActionChip(
+                          avatar: const Icon(Icons.event, size: 18, color: Color(0xFF0284C7)),
+                          backgroundColor: const Color(0xFFF1F5F9),
+                          label: Text(
+                            fechaEdit == null ? 'Sin fecha' : DateFormat('dd/MM/yyyy').format(fechaEdit!),
+                            style: const TextStyle(color: Color(0xFF0F172A)),
+                          ),
+                          onPressed: () async {
+                            final nuevaFecha = await showDatePicker(
+                              context: context,
+                              initialDate: fechaEdit ?? DateTime.now(),
+                              firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                              lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
+                            );
+                            if (nuevaFecha != null) {
+                              setStateModal(() => fechaEdit = nuevaFecha);
+                            }
+                          },
+                        ),
+                        if (fechaEdit != null)
+                          InkWell(
+                            onTap: () => setStateModal(() {
+                              fechaEdit = null;
+                              horaEdit = null;
+                            }),
+                            child: const Icon(Icons.cancel, size: 20, color: Color(0xFF94A3B8)),
+                          ),
+                        ActionChip(
+                          avatar: Icon(
+                            horaEdit == null ? Icons.alarm_off : Icons.alarm_on,
+                            size: 18,
+                            color: horaEdit == null ? const Color(0xFF64748B) : const Color(0xFFD97706),
+                          ),
+                          backgroundColor: horaEdit == null ? const Color(0xFFF1F5F9) : const Color(0xFFFEF3C7),
+                          label: Text(
+                            horaEdit == null ? 'Sin alarma' : horaEdit!.format(context),
+                            style: TextStyle(
+                              color: horaEdit == null ? const Color(0xFF334155) : const Color(0xFFB45309),
+                              fontWeight: horaEdit == null ? FontWeight.normal : FontWeight.bold,
+                            ),
+                          ),
+                          onPressed: () async {
+                            final nuevaHora = await showTimePicker(
+                              context: context,
+                              initialTime: horaEdit ?? TimeOfDay.now(),
+                            );
+                            if (nuevaHora != null) {
+                              setStateModal(() {
+                                fechaEdit ??= DateTime.now();
+                                horaEdit = nuevaHora;
+                              });
+                            }
+                          },
+                        ),
+                        if (horaEdit != null)
+                          InkWell(
+                            onTap: () => setStateModal(() => horaEdit = null),
+                            child: const Icon(Icons.cancel, size: 20, color: Color(0xFF94A3B8)),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Text('Prioridad: ', style: TextStyle(fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 8),
+                        DropdownButton<String>(
+                          value: prioridadEdit,
+                          dropdownColor: Colors.white,
+                          items: const [
+                            DropdownMenuItem(value: 'baja', child: Text('🟢 Baja')),
+                            DropdownMenuItem(value: 'normal', child: Text('🔵 Normal')),
+                            DropdownMenuItem(value: 'urgente', child: Text('🔴 Urgente')),
+                          ],
+                          onChanged: (val) => setStateModal(() => prioridadEdit = val ?? 'normal'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancelar', style: TextStyle(color: Color(0xFF64748B))),
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.save_rounded),
+                label: const Text('Guardar Cambios'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0284C7),
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () async {
+                  final nuevoTitulo = editTitCtrl.text.trim();
+                  if (nuevoTitulo.isEmpty) return;
+
+                  DateTime? fechaFinalEdit;
+                  final bool conAlarmaEdit = horaEdit != null;
+                  if (fechaEdit != null || conAlarmaEdit) {
+                    final base = fechaEdit ?? DateTime.now();
+                    final hora = horaEdit ?? const TimeOfDay(hour: 12, minute: 0);
+                    fechaFinalEdit = DateTime(base.year, base.month, base.day, hora.hour, hora.minute);
+                  }
+
+                  final actualizacion = {
+                    'titulo': nuevoTitulo,
+                    'descripcion': editDescCtrl.text.trim().isEmpty ? null : editDescCtrl.text.trim(),
+                    'fecha_alarma': fechaFinalEdit?.toUtc().toIso8601String(),
+                    'tiene_alarma': conAlarmaEdit,
+                    'prioridad': prioridadEdit,
+                    if (conAlarmaEdit) 'notificada': false,
+                  };
+
+                  setState(() {
+                    final idx = _todosLosPendientes.indexWhere((e) => e['id'].toString() == id);
+                    if (idx != -1) {
+                      _todosLosPendientes[idx] = {..._todosLosPendientes[idx], ...actualizacion};
+                    }
+                  });
+
+                  Navigator.of(ctx).pop();
+
+                  if (conAlarmaEdit) {
+                    await SupabaseService.pedirPermisoPush();
+                  }
+                  await SupabaseService.client.from('pendientes').update(actualizacion).eq('id', id);
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
   Future<void> _elegirSoloFecha() async {
     final fecha = await showDatePicker(
       context: context,
@@ -993,7 +1186,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       ),
     );
   }
-
   Widget _construirCarruselPublicidad() {
     final activos = _anunciosActivos;
     if (activos.isEmpty) return const SizedBox.shrink();
@@ -1217,7 +1409,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               const SizedBox(height: 12),
               TextField(
                 controller: _tituloCtrl,
-                onSubmitted: (_) => _guardarNotaRapida(),
+                textInputAction: TextInputAction.next,
                 style: const TextStyle(color: Color(0xFF0F172A)),
                 decoration: InputDecoration(
                   hintText: '¿Qué tienes pendiente?',
@@ -1237,6 +1429,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               const SizedBox(height: 8),
               TextField(
                 controller: _descCtrl,
+                textInputAction: TextInputAction.done,
                 style: const TextStyle(color: Color(0xFF334155), fontSize: 13),
                 decoration: InputDecoration(
                   hintText: 'Detalles opcionales...',
@@ -1449,7 +1642,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       onSelected: (_) => setState(() => _vistaSeleccionada = indice),
     );
   }
-
   Widget _construirTarjetaPendiente(Map<String, dynamic> item, {bool mostrarFechaCompleta = false}) {
     final String id = item['id'].toString();
     final bool completada = item['completada'] ?? false;
@@ -1499,14 +1691,14 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               borderRadius: BorderRadius.circular(4),
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
           Material(
             color: Colors.transparent,
             child: InkWell(
               borderRadius: BorderRadius.circular(24),
               onTap: () => _alternarCompletada(id, !completada),
               child: Padding(
-                padding: const EdgeInsets.all(10.0),
+                padding: const EdgeInsets.all(8.0),
                 child: Icon(
                   completada ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
                   color: completada ? const Color(0xFF16A34A) : const Color(0xFF94A3B8),
@@ -1515,7 +1707,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               ),
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1558,6 +1750,21 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               ],
             ),
           ),
+          // Botón Editar Nota
+          Material(
+            color: const Color(0xFFE0F2FE),
+            borderRadius: BorderRadius.circular(10),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => _mostrarEditorNota(item),
+              child: const Padding(
+                padding: EdgeInsets.all(9.0),
+                child: Icon(Icons.edit_outlined, color: Color(0xFF0284C7), size: 20),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // Botón Eliminar Nota
           Material(
             color: const Color(0xFFFEF2F2),
             borderRadius: BorderRadius.circular(10),
@@ -1565,8 +1772,8 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               borderRadius: BorderRadius.circular(10),
               onTap: () => _eliminarPendiente(id),
               child: const Padding(
-                padding: EdgeInsets.all(10.0),
-                child: Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 22),
+                padding: EdgeInsets.all(9.0),
+                child: Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 20),
               ),
             ),
           ),
