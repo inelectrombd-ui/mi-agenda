@@ -92,8 +92,10 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
         .order('orden', ascending: true)
         .listen((datos) {
       if (mounted) {
+        final listaOrdenada = List<Map<String, dynamic>>.from(datos)
+          ..sort((a, b) => ((a['orden'] ?? 0) as int).compareTo((b['orden'] ?? 0) as int));
         setState(() {
-          _anuncios = List<Map<String, dynamic>>.from(datos);
+          _anuncios = listaOrdenada;
           if (_indiceAnuncioActual >= _anunciosActivos.length) {
             _indiceAnuncioActual = 0;
           }
@@ -171,7 +173,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       ),
     );
   }
-   String? _formatearDestinoAnuncio(String entrada, String tituloAnuncio) {
+  String? _formatearDestinoAnuncio(String entrada) {
     final limpio = entrada.trim();
     if (limpio.isEmpty) return null;
     if (limpio.startsWith('http://') || limpio.startsWith('https://')) {
@@ -180,14 +182,59 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     return 'https://$limpio';
   }
 
+  Future<void> _borrarImagenDeStorage(String? urlImagen) async {
+    if (urlImagen == null || urlImagen.isEmpty) return;
+    try {
+      const marcador = '/banners/';
+      final idx = urlImagen.indexOf(marcador);
+      if (idx != -1) {
+        final nombreArchivo = Uri.decodeComponent(urlImagen.substring(idx + marcador.length).split('?').first);
+        if (nombreArchivo.isNotEmpty) {
+          await SupabaseService.client.storage.from('banners').remove([nombreArchivo]);
+        }
+      }
+    } catch (_) {}
+  }
 
+  Future<void> _intercambiarOrdenAnuncios(int indiceActual, int indiceDestino) async {
+    if (indiceDestino < 0 || indiceDestino >= _anuncios.length) return;
+    final actual = _anuncios[indiceActual];
+    final destino = _anuncios[indiceDestino];
+
+    final ordenActual = actual['orden'] ?? indiceActual;
+    final ordenDestino = destino['orden'] ?? indiceDestino;
+
+    final nuevoOrdenActual = ordenActual == ordenDestino ? indiceDestino : ordenDestino;
+    final nuevoOrdenDestino = ordenActual == ordenDestino ? indiceActual : ordenActual;
+
+    setState(() {
+      _anuncios[indiceActual] = {...actual, 'orden': nuevoOrdenActual};
+      _anuncios[indiceDestino] = {...destino, 'orden': nuevoOrdenDestino};
+      _anuncios.sort((a, b) => ((a['orden'] ?? 0) as int).compareTo((b['orden'] ?? 0) as int));
+    });
+
+    await SupabaseService.client.from('anuncios').update({'orden': nuevoOrdenActual}).eq('id', actual['id']);
+    await SupabaseService.client.from('anuncios').update({'orden': nuevoOrdenDestino}).eq('id', destino['id']);
+  }
   void _mostrarGestorPublicidad() {
     final titAnuncioCtrl = TextEditingController();
     final subAnuncioCtrl = TextEditingController();
     final contactoCtrl = TextEditingController();
     Uint8List? bytesImagenSeleccionada;
     String? nombreArchivoSeleccionado;
+    String? idEditando;
+    String? urlImagenExistente;
     bool subiendo = false;
+
+    void limpiarFormulario() {
+      titAnuncioCtrl.clear();
+      subAnuncioCtrl.clear();
+      contactoCtrl.clear();
+      bytesImagenSeleccionada = null;
+      nombreArchivoSeleccionado = null;
+      idEditando = null;
+      urlImagenExistente = null;
+    }
 
     showDialog(
       context: context,
@@ -207,15 +254,29 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               ],
             ),
             content: SizedBox(
-              width: 440,
+              width: 450,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Agregar nuevo banner o anuncio:',
-                      style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0284C7), fontSize: 13),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          idEditando == null ? 'Agregar nuevo banner o anuncio:' : '✏️ Editando anuncio:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: idEditando == null ? const Color(0xFF0284C7) : const Color(0xFFD97706),
+                            fontSize: 13,
+                          ),
+                        ),
+                        if (idEditando != null)
+                          TextButton(
+                            onPressed: () => setStateModal(limpiarFormulario),
+                            child: const Text('Cancelar edición', style: TextStyle(fontSize: 12)),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     TextField(
@@ -238,22 +299,23 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                     const SizedBox(height: 8),
                     TextField(
                       controller: contactoCtrl,
-                                           decoration: const InputDecoration(
+                      decoration: const InputDecoration(
                         labelText: 'URL de destino (Opcional)',
                         hintText: 'https://walmart.com.mx',
                         prefixIcon: Icon(Icons.link_rounded, color: Color(0xFF0284C7)),
                         isDense: true,
                         border: OutlineInputBorder(),
                       ),
-
                     ),
                     const SizedBox(height: 10),
                     OutlinedButton.icon(
                       icon: const Icon(Icons.photo_library_outlined, color: Color(0xFF0284C7)),
                       label: Text(
-                        nombreArchivoSeleccionado == null
-                            ? 'Elegir imagen del teléfono (Opcional)'
-                            : 'Imagen lista: $nombreArchivoSeleccionado',
+                        nombreArchivoSeleccionado != null
+                            ? 'Nueva imagen: $nombreArchivoSeleccionado'
+                            : (urlImagenExistente != null
+                                ? 'Cambiar imagen actual del banner'
+                                : 'Elegir imagen del teléfono (Opcional)'),
                         overflow: TextOverflow.ellipsis,
                       ),
                       style: OutlinedButton.styleFrom(
@@ -278,25 +340,34 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                               }
                             },
                     ),
-                    if (bytesImagenSeleccionada != null) ...[
+                    if (bytesImagenSeleccionada != null || urlImagenExistente != null) ...[
                       const SizedBox(height: 8),
                       Stack(
                         alignment: Alignment.topRight,
                         children: [
                           ClipRRect(
                             borderRadius: BorderRadius.circular(10),
-                            child: Image.memory(
-                              bytesImagenSeleccionada!,
-                              height: 90,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                            ),
+                            child: bytesImagenSeleccionada != null
+                                ? Image.memory(
+                                    bytesImagenSeleccionada!,
+                                    height: 90,
+                                    width: double.infinity,
+                                    fit: BoxFit.cover,
+                                  )
+                                : Image.network(
+                                    urlImagenExistente!,
+                                    height: 90,
+                                    width: double.infinity,
+                                    fit: BoxFit.cover,
+                                  ),
                           ),
                           IconButton(
+                            tooltip: 'Quitar imagen',
                             icon: const Icon(Icons.cancel, color: Colors.red),
                             onPressed: () => setStateModal(() {
                               bytesImagenSeleccionada = null;
                               nombreArchivoSeleccionado = null;
+                              urlImagenExistente = null;
                             }),
                           ),
                         ],
@@ -312,10 +383,14 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                                 height: 18,
                                 child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                               )
-                            : const Icon(Icons.add_circle_outline),
-                        label: Text(subiendo ? 'Subiendo banner...' : 'Publicar Anuncio'),
+                            : Icon(idEditando == null ? Icons.add_circle_outline : Icons.save_outlined),
+                        label: Text(
+                          subiendo
+                              ? 'Guardando...'
+                              : (idEditando == null ? 'Publicar Anuncio' : 'Guardar Cambios'),
+                        ),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF0284C7),
+                          backgroundColor: idEditando == null ? const Color(0xFF0284C7) : const Color(0xFFD97706),
                           foregroundColor: Colors.white,
                         ),
                         onPressed: subiendo
@@ -325,10 +400,19 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                                 if (titulo.isEmpty) return;
 
                                 setStateModal(() => subiendo = true);
-                                String? urlImagenSubida;
+                                String? urlFinalImagen = urlImagenExistente;
 
                                 try {
                                   if (bytesImagenSeleccionada != null) {
+                                    // Si estamos editando y había una imagen anterior, borrarla de Storage
+                                    if (idEditando != null) {
+                                      final anterior = _anuncios.firstWhere(
+                                        (a) => a['id'].toString() == idEditando,
+                                        orElse: () => {},
+                                      );
+                                      await _borrarImagenDeStorage(anterior['imagen_url']);
+                                    }
+
                                     final ext = (nombreArchivoSeleccionado ?? 'jpg').split('.').last;
                                     final rutaArchivo = 'banner_${DateTime.now().millisecondsSinceEpoch}.$ext';
 
@@ -338,28 +422,45 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                                           fileOptions: const FileOptions(upsert: true),
                                         );
 
-                                    urlImagenSubida =
+                                    urlFinalImagen =
                                         SupabaseService.client.storage.from('banners').getPublicUrl(rutaArchivo);
+                                  } else if (idEditando != null && urlImagenExistente == null) {
+                                    // Si el usuario quitó la imagen durante la edición, borrarla de Storage
+                                    final anterior = _anuncios.firstWhere(
+                                      (a) => a['id'].toString() == idEditando,
+                                      orElse: () => {},
+                                    );
+                                    await _borrarImagenDeStorage(anterior['imagen_url']);
                                   }
 
-                                  final enlaceFinal = _formatearDestinoAnuncio(contactoCtrl.text, titulo);
+                                  final enlaceFinal = _formatearDestinoAnuncio(contactoCtrl.text);
 
-                                  await SupabaseService.client.from('anuncios').insert({
-                                    'titulo': titulo,
-                                    'subtitulo': subAnuncioCtrl.text.trim().isEmpty ? null : subAnuncioCtrl.text.trim(),
-                                    'imagen_url': urlImagenSubida,
-                                    'enlace_url': enlaceFinal,
-                                    'activo': true,
-                                    'orden': _anuncios.length + 1,
-                                  });
+                                  if (idEditando == null) {
+                                    final maxOrden = _anuncios.isEmpty
+                                        ? 1
+                                        : _anuncios
+                                                .map((e) => (e['orden'] ?? 0) as int)
+                                                .reduce((a, b) => a > b ? a : b) +
+                                            1;
 
-                                  titAnuncioCtrl.clear();
-                                  subAnuncioCtrl.clear();
-                                  contactoCtrl.clear();
-                                  setStateModal(() {
-                                    bytesImagenSeleccionada = null;
-                                    nombreArchivoSeleccionado = null;
-                                  });
+                                    await SupabaseService.client.from('anuncios').insert({
+                                      'titulo': titulo,
+                                      'subtitulo': subAnuncioCtrl.text.trim().isEmpty ? null : subAnuncioCtrl.text.trim(),
+                                      'imagen_url': urlFinalImagen,
+                                      'enlace_url': enlaceFinal,
+                                      'activo': true,
+                                      'orden': maxOrden,
+                                    });
+                                  } else {
+                                    await SupabaseService.client.from('anuncios').update({
+                                      'titulo': titulo,
+                                      'subtitulo': subAnuncioCtrl.text.trim().isEmpty ? null : subAnuncioCtrl.text.trim(),
+                                      'imagen_url': urlFinalImagen,
+                                      'enlace_url': enlaceFinal,
+                                    }).eq('id', idEditando!);
+                                  }
+
+                                  setStateModal(limpiarFormulario);
                                 } finally {
                                   setStateModal(() => subiendo = false);
                                 }
@@ -375,24 +476,70 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                     if (_anuncios.isEmpty)
                       const Text('No hay anuncios creados.', style: TextStyle(color: Color(0xFF64748B), fontSize: 12))
                     else
-                      ..._anuncios.map((anuncio) {
+                      ...List.generate(_anuncios.length, (index) {
+                        final anuncio = _anuncios[index];
                         final bool activo = anuncio['activo'] ?? false;
                         return Card(
                           color: const Color(0xFFF8FAFC),
                           margin: const EdgeInsets.only(bottom: 8),
-                          child: ListTile(
-                            dense: true,
-                            title: Text(
-                              anuncio['titulo'] ?? '',
-                              style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-                            ),
-                            subtitle: Text(
-                              anuncio['imagen_url'] != null ? '🖼️ Banner con imagen' : '📝 Tarjeta de texto',
-                              style: const TextStyle(fontSize: 11),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            child: Row(
                               children: [
+                                // Flechas para subir / bajar orden
+                                Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    InkWell(
+                                      onTap: index == 0
+                                          ? null
+                                          : () async {
+                                              await _intercambiarOrdenAnuncios(index, index - 1);
+                                              setStateModal(() {});
+                                            },
+                                      child: Icon(
+                                        Icons.keyboard_arrow_up_rounded,
+                                        color: index == 0 ? Colors.black12 : const Color(0xFF0284C7),
+                                        size: 24,
+                                      ),
+                                    ),
+                                    InkWell(
+                                      onTap: index == _anuncios.length - 1
+                                          ? null
+                                          : () async {
+                                              await _intercambiarOrdenAnuncios(index, index + 1);
+                                              setStateModal(() {});
+                                            },
+                                      child: Icon(
+                                        Icons.keyboard_arrow_down_rounded,
+                                        color: index == _anuncios.length - 1 ? Colors.black12 : const Color(0xFF0284C7),
+                                        size: 24,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${index + 1}. ${anuncio['titulo'] ?? ''}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF0F172A),
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                      Text(
+                                        anuncio['imagen_url'] != null ? '🖼️ Banner con imagen' : '📝 Tarjeta de texto',
+                                        style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                                 Switch(
                                   value: activo,
                                   activeThumbColor: const Color(0xFF16A34A),
@@ -405,8 +552,28 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                                   },
                                 ),
                                 IconButton(
+                                  tooltip: 'Editar anuncio',
+                                  icon: const Icon(Icons.edit_outlined, color: Color(0xFF0284C7), size: 20),
+                                  onPressed: () {
+                                    setStateModal(() {
+                                      idEditando = anuncio['id'].toString();
+                                      titAnuncioCtrl.text = anuncio['titulo'] ?? '';
+                                      subAnuncioCtrl.text = anuncio['subtitulo'] ?? '';
+                                      contactoCtrl.text = anuncio['enlace_url'] ?? '';
+                                      urlImagenExistente = anuncio['imagen_url'];
+                                      bytesImagenSeleccionada = null;
+                                      nombreArchivoSeleccionado = null;
+                                    });
+                                  },
+                                ),
+                                IconButton(
+                                  tooltip: 'Eliminar anuncio e imagen',
                                   icon: const Icon(Icons.delete_outline, color: Color(0xFFDC2626), size: 20),
                                   onPressed: () async {
+                                    if (idEditando == anuncio['id'].toString()) {
+                                      limpiarFormulario();
+                                    }
+                                    await _borrarImagenDeStorage(anuncio['imagen_url']);
                                     await SupabaseService.client
                                         .from('anuncios')
                                         .delete()
@@ -1273,6 +1440,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       onSelected: (_) => setState(() => _vistaSeleccionada = indice),
     );
   }
+
   Widget _construirTarjetaPendiente(Map<String, dynamic> item, {bool mostrarFechaCompleta = false}) {
     final String id = item['id'].toString();
     final bool completada = item['completada'] ?? false;
@@ -1414,7 +1582,6 @@ class _ModalAlarmaInteractiva extends StatefulWidget {
   @override
   State<_ModalAlarmaInteractiva> createState() => _ModalAlarmaInteractivaState();
 }
-
 class _ModalAlarmaInteractivaState extends State<_ModalAlarmaInteractiva> with SingleTickerProviderStateMixin {
   late AnimationController _animCtrl;
 
