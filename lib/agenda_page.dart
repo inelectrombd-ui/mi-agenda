@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:js_interop';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'supabase_service.dart';
+
+@JS('window.open')
+external void _abrirEnlaceWeb(JSString url, JSString target);
 
 class AgendaPage extends StatefulWidget {
   const AgendaPage({super.key});
@@ -29,26 +33,72 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
   Timer? _repetidorSonido;
   final Set<String> _alarmasEnPantalla = {};
 
+  // Variables de Administrador y Carrusel de Publicidad
   List<Map<String, dynamic>> _usuariosRegistrados = [];
+  List<Map<String, dynamic>> _anuncios = [];
+  StreamSubscription? _anunciosSub;
+  final PageController _carruselCtrl = PageController();
+  Timer? _timerCarrusel;
+  int _indiceAnuncioActual = 0;
+
   bool get _esAdmin => SupabaseService.client.auth.currentUser?.email == 'inelectrombd@gmail.com';
   @override
   void initState() {
     super.initState();
     _escucharPendientesEnTiempoReal();
+    _escucharAnunciosEnTiempoReal();
     if (_esAdmin) {
       _cargarUsuariosAdmin();
     }
     _relojAlarmas = Timer.periodic(const Duration(seconds: 3), (_) => _verificarAlarmas());
+    _iniciarRotacionPublicidad();
   }
+
+  void _iniciarRotacionPublicidad() {
+    _timerCarrusel?.cancel();
+    _timerCarrusel = Timer.periodic(const Duration(seconds: 5), (_) {
+      final activos = _anunciosActivos;
+      if (activos.length > 1 && _carruselCtrl.hasClients) {
+        final siguiente = (_indiceAnuncioActual + 1) % activos.length;
+        _carruselCtrl.animateToPage(
+          siguiente,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
+  }
+
+  List<Map<String, dynamic>> get _anunciosActivos =>
+      _anuncios.where((a) => (a['activo'] ?? false) == true).toList();
 
   @override
   void dispose() {
     _realtimeSub?.cancel();
+    _anunciosSub?.cancel();
     _relojAlarmas?.cancel();
     _repetidorSonido?.cancel();
+    _timerCarrusel?.cancel();
+    _carruselCtrl.dispose();
     _tituloCtrl.dispose();
     _descCtrl.dispose();
     super.dispose();
+  }
+  void _escucharAnunciosEnTiempoReal() {
+    _anunciosSub = SupabaseService.client
+        .from('anuncios')
+        .stream(primaryKey: ['id'])
+        .order('orden', ascending: true)
+        .listen((datos) {
+      if (mounted) {
+        setState(() {
+          _anuncios = List<Map<String, dynamic>>.from(datos);
+          if (_indiceAnuncioActual >= _anunciosActivos.length) {
+            _indiceAnuncioActual = 0;
+          }
+        });
+      }
+    });
   }
 
   Future<void> _cargarUsuariosAdmin() async {
@@ -64,6 +114,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       }
     } catch (_) {}
   }
+
   void _mostrarPanelAdmin() {
     _cargarUsuariosAdmin();
     showDialog(
@@ -116,6 +167,174 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
             child: const Text('Cerrar', style: TextStyle(color: Color(0xFF0284C7), fontWeight: FontWeight.bold)),
           ),
         ],
+      ),
+    );
+  }
+  void _mostrarGestorPublicidad() {
+    final titAnuncioCtrl = TextEditingController();
+    final subAnuncioCtrl = TextEditingController();
+    final imgAnuncioCtrl = TextEditingController();
+    final linkAnuncioCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateModal) {
+          return AlertDialog(
+            backgroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Row(
+              children: [
+                Icon(Icons.campaign_rounded, color: Color(0xFFD97706), size: 28),
+                SizedBox(width: 10),
+                Text(
+                  'Gestor de Publicidad',
+                  style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 440,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Agregar nuevo banner o anuncio:',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0284C7), fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: titAnuncioCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Título del anuncio *',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: subAnuncioCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Texto corto / Promoción (Opcional)',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: imgAnuncioCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'URL de Imagen Banner (Opcional)',
+                        hintText: 'https://.../banner.jpg',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: linkAnuncioCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Enlace al hacer clic (WhatsApp, Web, etc.)',
+                        hintText: 'https://...',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.add_circle_outline),
+                        label: const Text('Publicar Anuncio'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0284C7),
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () async {
+                          if (titAnuncioCtrl.text.trim().isEmpty) return;
+                          await SupabaseService.client.from('anuncios').insert({
+                            'titulo': titAnuncioCtrl.text.trim(),
+                            'subtitulo': subAnuncioCtrl.text.trim().isEmpty ? null : subAnuncioCtrl.text.trim(),
+                            'imagen_url': imgAnuncioCtrl.text.trim().isEmpty ? null : imgAnuncioCtrl.text.trim(),
+                            'enlace_url': linkAnuncioCtrl.text.trim().isEmpty ? null : linkAnuncioCtrl.text.trim(),
+                            'activo': true,
+                            'orden': _anuncios.length + 1,
+                          });
+                          titAnuncioCtrl.clear();
+                          subAnuncioCtrl.clear();
+                          imgAnuncioCtrl.clear();
+                          linkAnuncioCtrl.clear();
+                          setStateModal(() {});
+                        },
+                      ),
+                    ),
+                    const Divider(height: 24),
+                    Text(
+                      'Anuncios guardados (${_anuncios.length}):',
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F172A), fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
+                    if (_anuncios.isEmpty)
+                      const Text('No hay anuncios creados.', style: TextStyle(color: Color(0xFF64748B), fontSize: 12))
+                    else
+                      ..._anuncios.map((anuncio) {
+                        final bool activo = anuncio['activo'] ?? false;
+                        return Card(
+                          color: const Color(0xFFF8FAFC),
+                          margin: const EdgeInsets.only(bottom: 8),
+                          child: ListTile(
+                            dense: true,
+                            title: Text(
+                              anuncio['titulo'] ?? '',
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                            ),
+                            subtitle: Text(
+                              anuncio['imagen_url'] != null ? '🖼️ Banner con imagen' : '📝 Tarjeta de texto',
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Switch(
+                                  value: activo,
+                                  activeThumbColor: const Color(0xFF16A34A),
+                                  onChanged: (val) async {
+                                    await SupabaseService.client
+                                        .from('anuncios')
+                                        .update({'activo': val})
+                                        .eq('id', anuncio['id']);
+                                    setStateModal(() {});
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, color: Color(0xFFDC2626), size: 20),
+                                  onPressed: () async {
+                                    await SupabaseService.client
+                                        .from('anuncios')
+                                        .delete()
+                                        .eq('id', anuncio['id']);
+                                    setStateModal(() {});
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cerrar', style: TextStyle(color: Color(0xFF0284C7), fontWeight: FontWeight.bold)),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -383,7 +602,12 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
           ],
         ),
         actions: [
-          if (_esAdmin)
+          if (_esAdmin) ...[
+            IconButton(
+              tooltip: 'Gestionar Publicidad',
+              icon: const Icon(Icons.campaign_rounded, color: Color(0xFFD97706)),
+              onPressed: _mostrarGestorPublicidad,
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
               child: ActionChip(
@@ -402,6 +626,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                 onPressed: _mostrarPanelAdmin,
               ),
             ),
+          ],
           IconButton(
             tooltip: 'Probar sonido y notificación',
             icon: const Icon(Icons.notifications_active_outlined, color: Color(0xFFD97706)),
@@ -466,7 +691,18 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
             ? Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(flex: 5, child: _construirPanelCalendario()),
+                  Expanded(
+                    flex: 5,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          _construirPanelCalendario(),
+                          const SizedBox(height: 16),
+                          _construirCarruselPublicidad(),
+                        ],
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 20),
                   Expanded(flex: 6, child: _construirPanelNotasYPendientes(notasSinFecha, eventosDelDia)),
                 ],
@@ -475,6 +711,8 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                 child: Column(
                   children: [
                     _construirPanelCalendario(),
+                    const SizedBox(height: 12),
+                    _construirCarruselPublicidad(),
                     const SizedBox(height: 16),
                     _construirPanelNotasYPendientes(notasSinFecha, eventosDelDia, scrollable: false),
                   ],
@@ -484,6 +722,131 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     );
   }
 
+  Widget _construirCarruselPublicidad() {
+    final activos = _anunciosActivos;
+    if (activos.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      children: [
+        SizedBox(
+          height: 135,
+          child: PageView.builder(
+            controller: _carruselCtrl,
+            itemCount: activos.length,
+            onPageChanged: (idx) => setState(() => _indiceAnuncioActual = idx),
+            itemBuilder: (context, index) {
+              final item = activos[index];
+              final String? imgUrl = item['imagen_url'];
+              final String? linkUrl = item['enlace_url'];
+
+              return GestureDetector(
+                onTap: () {
+                  if (linkUrl != null && linkUrl.isNotEmpty) {
+                    _abrirEnlaceWeb(linkUrl.toJS, '_blank'.toJS);
+                  }
+                },
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF0284C7), Color(0xFF1D4ED8)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (imgUrl != null && imgUrl.isNotEmpty)
+                          Image.network(
+                            imgUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => _contenidoTarjetaTextoAnuncio(item),
+                          )
+                        else
+                          _contenidoTarjetaTextoAnuncio(item),
+                        Positioned(
+                          top: 8,
+                          right: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              'Patrocinado',
+                              style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        if (activos.length > 1) ...[
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(activos.length, (i) {
+              final seleccionado = i == _indiceAnuncioActual;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: seleccionado ? 16 : 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: seleccionado ? const Color(0xFF0284C7) : const Color(0xFFCBD5E1),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              );
+            }),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _contenidoTarjetaTextoAnuncio(Map<String, dynamic> item) {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            item['titulo'] ?? '',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          if (item['subtitulo'] != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              item['subtitulo'],
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
   Widget _construirPanelCalendario() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -796,7 +1159,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
 
     return scrollable ? SingleChildScrollView(child: contenido) : contenido;
   }
-
   Widget _botonPestana(int indice, String texto) {
     final activa = _vistaSeleccionada == indice;
     return ChoiceChip(
@@ -814,6 +1176,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       onSelected: (_) => setState(() => _vistaSeleccionada = indice),
     );
   }
+
   Widget _construirTarjetaPendiente(Map<String, dynamic> item, {bool mostrarFechaCompleta = false}) {
     final String id = item['id'].toString();
     final bool completada = item['completada'] ?? false;
