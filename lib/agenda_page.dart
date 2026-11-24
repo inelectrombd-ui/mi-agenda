@@ -64,7 +64,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       }
     } catch (_) {}
   }
-
   void _mostrarPanelAdmin() {
     _cargarUsuariosAdmin();
     showDialog(
@@ -90,7 +89,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                   shrinkWrap: true,
                   itemCount: _usuariosRegistrados.length,
                   separatorBuilder: (_, _) => const Divider(height: 1),
-
                   itemBuilder: (_, i) {
                     final u = _usuariosRegistrados[i];
                     final fecha = DateTime.parse(u['fecha_registro']).toLocal();
@@ -416,6 +414,45 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               );
             },
           ),
+          if (!_esAdmin)
+            IconButton(
+              tooltip: 'Eliminar mi cuenta y datos',
+              icon: const Icon(Icons.person_remove_outlined, color: Color(0xFFDC2626)),
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: Colors.white,
+                    title: const Text(
+                      '¿Eliminar cuenta permanentemente?',
+                      style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.bold),
+                    ),
+                    content: const Text(
+                      'Se borrarán de inmediato tu usuario y todas tus notas guardadas. Esta acción no se puede deshacer.',
+                      style: TextStyle(color: Color(0xFF475569)),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('Cancelar'),
+                      ),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFDC2626),
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () async {
+                          Navigator.of(ctx).pop();
+                          await SupabaseService.client.rpc('eliminar_mi_cuenta');
+                          await SupabaseService.client.auth.signOut();
+                        },
+                        child: const Text('Sí, borrar todo'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           IconButton(
             tooltip: 'Cerrar sesión',
             icon: const Icon(Icons.logout_rounded, color: Color(0xFF475569)),
@@ -446,6 +483,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       ),
     );
   }
+
   Widget _construirPanelCalendario() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -758,6 +796,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
 
     return scrollable ? SingleChildScrollView(child: contenido) : contenido;
   }
+
   Widget _botonPestana(int indice, String texto) {
     final activa = _vistaSeleccionada == indice;
     return ChoiceChip(
@@ -775,7 +814,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       onSelected: (_) => setState(() => _vistaSeleccionada = indice),
     );
   }
-
   Widget _construirTarjetaPendiente(Map<String, dynamic> item, {bool mostrarFechaCompleta = false}) {
     final String id = item['id'].toString();
     final bool completada = item['completada'] ?? false;
