@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'supabase_service.dart';
@@ -28,6 +30,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
   TimeOfDay? _horaAlarmaSeleccionada;
   String _prioridadSeleccionada = 'normal';
   int _vistaSeleccionada = 0; // 0: Día elegido, 1: Todas pendientes, 2: Realizadas
+  bool _generandoPDF = false;
 
   List<Map<String, dynamic>> _todosLosPendientes = [];
   StreamSubscription? _realtimeSub;
@@ -787,6 +790,166 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
 
     await SupabaseService.client.from('pendientes').insert(data);
   }
+  Future<void> _exportarReportePDF() async {
+    if (_generandoPDF) return;
+    setState(() => _generandoPDF = true);
+
+    try {
+      String tituloReporte;
+      String nombreArchivo;
+      List<Map<String, dynamic>> listaExportar;
+
+      if (_vistaSeleccionada == 0) {
+        final fechaDia = DateFormat('dd/MM/yyyy').format(_selectedDay);
+        final fechaArchivo = DateFormat('dd-MM-yyyy').format(_selectedDay);
+        tituloReporte = 'Actividades del Dia $fechaDia';
+        nombreArchivo = 'Agenda_Dia_$fechaArchivo.pdf';
+        final delDia = _obtenerEventosDelDia(_selectedDay);
+        final sinFecha = _todosLosPendientes
+            .where((e) => e['fecha_alarma'] == null && !(e['completada'] ?? false))
+            .toList();
+        listaExportar = [...delDia, ...sinFecha];
+      } else if (_vistaSeleccionada == 1) {
+        tituloReporte = 'Todas las Actividades Pendientes';
+        nombreArchivo = 'Agenda_Pendientes_${DateFormat('dd-MM-yyyy').format(DateTime.now())}.pdf';
+        listaExportar = _todosLosPendientes.where((e) => !(e['completada'] ?? false)).toList();
+      } else {
+        tituloReporte = 'Historial de Actividades Realizadas';
+        nombreArchivo = 'Agenda_Realizadas_${DateFormat('dd-MM-yyyy').format(DateTime.now())}.pdf';
+        listaExportar = _todosLosPendientes.where((e) => (e['completada'] ?? false)).toList().reversed.toList();
+      }
+
+      if (listaExportar.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No hay actividades en esta vista para exportar a PDF.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final pdf = pw.Document();
+      final correoUsuario = SupabaseService.client.auth.currentUser?.email ?? '';
+      final fechaEmision = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+
+      String limpiarTexto(String? s) {
+        if (s == null) return '';
+        return s.replaceAll(RegExp(r'[^\x00-\xFF]'), '').trim();
+      }
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.letter,
+          margin: const pw.EdgeInsets.all(32),
+          header: (pw.Context ctx) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text(
+                    'MI AGENDA INTERACTIVA',
+                    style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold, color: PdfColors.blue800),
+                  ),
+                  pw.Text(
+                    'Emitido: $fechaEmision',
+                    style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
+                  ),
+                ],
+              ),
+              pw.SizedBox(height: 4),
+              pw.Text(
+                limpiarTexto(tituloReporte),
+                style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+              ),
+              if (correoUsuario.isNotEmpty)
+                pw.Text(
+                  'Usuario: $correoUsuario  |  Total: ${listaExportar.length} registros',
+                  style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey600),
+                ),
+              pw.Divider(color: PdfColors.blue300, thickness: 1.5),
+              pw.SizedBox(height: 8),
+            ],
+          ),
+          footer: (pw.Context ctx) => pw.Container(
+            alignment: pw.Alignment.centerRight,
+            margin: const pw.EdgeInsets.only(top: 10),
+            child: pw.Text(
+              'Pagina ${ctx.pageNumber} de ${ctx.pagesCount}',
+              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey600),
+            ),
+          ),
+          build: (pw.Context ctx) {
+            return [
+              pw.TableHelper.fromTextArray(
+                border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.7),
+                headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white, fontSize: 10),
+                headerDecoration: const pw.BoxDecoration(color: PdfColors.blue700),
+                cellStyle: const pw.TextStyle(fontSize: 9.5, color: PdfColors.grey900),
+                cellPadding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                columnWidths: {
+                  0: const pw.FlexColumnWidth(1.3),
+                  1: const pw.FlexColumnWidth(3.5),
+                  2: const pw.FlexColumnWidth(2.0),
+                  3: const pw.FlexColumnWidth(1.2),
+                },
+                headers: ['Estado', 'Actividad / Detalles', 'Fecha / Alarma', 'Prioridad'],
+                data: listaExportar.map((item) {
+                  final bool comp = item['completada'] ?? false;
+                  final bool alarma = item['tiene_alarma'] ?? false;
+                  final String? fStr = item['fecha_alarma'];
+                  final fLocal = fStr != null ? DateTime.parse(fStr).toLocal() : null;
+
+                  final tit = limpiarTexto(item['titulo'] ?? '');
+                  final desc = limpiarTexto(item['descripcion']);
+                  final textoActividad = desc.isEmpty ? tit : '$tit\n($desc)';
+
+                  String textoFecha;
+                  if (fLocal == null) {
+                    textoFecha = 'Sin fecha';
+                  } else if (alarma) {
+                    textoFecha = '${DateFormat('dd/MM/yyyy HH:mm').format(fLocal)} [Alarma]';
+                  } else {
+                    textoFecha = DateFormat('dd/MM/yyyy').format(fLocal);
+                  }
+
+                  final prioRaw = (item['prioridad'] ?? 'normal').toString();
+                  final prioTexto = prioRaw == 'urgente'
+                      ? 'URGENTE'
+                      : (prioRaw == 'baja' ? 'Baja' : 'Normal');
+
+                  return [
+                    comp ? 'Realizada' : 'Pendiente',
+                    textoActividad,
+                    textoFecha,
+                    prioTexto,
+                  ];
+                }).toList(),
+              ),
+            ];
+          },
+        ),
+      );
+
+      final bytes = await pdf.save();
+      SupabaseService.descargarPDF(bytes, nombreArchivo);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Descargando $nombreArchivo...'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _generandoPDF = false);
+    }
+  }
   void _mostrarEditorNota(Map<String, dynamic> item) {
     final String id = item['id'].toString();
     final editTitCtrl = TextEditingController(text: item['titulo'] ?? '');
@@ -1544,6 +1707,24 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               _botonPestana(1, '⏳ Todas Pendientes (${todasPendientes.length})'),
               const SizedBox(width: 8),
               _botonPestana(2, '✅ Realizadas (${todasRealizadas.length})'),
+              const SizedBox(width: 8),
+              ActionChip(
+                avatar: _generandoPDF
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFDC2626)),
+                      )
+                    : const Icon(Icons.picture_as_pdf_rounded, size: 18, color: Color(0xFFDC2626)),
+                backgroundColor: const Color(0xFFFEF2F2),
+                side: const BorderSide(color: Color(0xFFFECACA)),
+                label: const Text(
+                  'PDF',
+                  style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.bold),
+                ),
+                tooltip: 'Descargar reporte PDF de la lista actual',
+                onPressed: _generandoPDF ? null : _exportarReportePDF,
+              ),
             ],
           ),
         ),
@@ -1750,7 +1931,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
               ],
             ),
           ),
-          // Botón Editar Nota
           Material(
             color: const Color(0xFFE0F2FE),
             borderRadius: BorderRadius.circular(10),
@@ -1764,7 +1944,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
             ),
           ),
           const SizedBox(width: 6),
-          // Botón Eliminar Nota
           Material(
             color: const Color(0xFFFEF2F2),
             borderRadius: BorderRadius.circular(10),
@@ -1798,6 +1977,7 @@ class _ModalAlarmaInteractiva extends StatefulWidget {
   @override
   State<_ModalAlarmaInteractiva> createState() => _ModalAlarmaInteractivaState();
 }
+
 class _ModalAlarmaInteractivaState extends State<_ModalAlarmaInteractiva> with SingleTickerProviderStateMixin {
   late AnimationController _animCtrl;
 

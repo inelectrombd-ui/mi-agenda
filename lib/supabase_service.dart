@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:js_interop';
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 // Puentes hacia las funciones JavaScript de web/index.html
@@ -14,8 +16,8 @@ external void _reproducirSonidoJS(JSBoolean urgente);
 @JS('actualizarTituloPestana')
 external void _actualizarTituloJS(JSString texto);
 
-@JS('agregarAlarmaCalendarioNativo')
-external void _agregarAlarmaCalendarioJS(JSString titulo, JSString descripcion, JSString fechaIsoUtc);
+@JS('descargarArchivoPDF')
+external void _descargarPDFJS(JSString base64Data, JSString nombreArchivo);
 
 class SupabaseService {
   static const String supabaseUrl = 'https://jjpezgqkunuwtqilphol.supabase.co';
@@ -30,7 +32,7 @@ class SupabaseService {
 
   static SupabaseClient get client => Supabase.instance.client;
 
-  // Métodos de alertas web y nativas
+  // Métodos de alertas web
   static Future<String> pedirPermisoPush() async {
     final res = await _solicitarPermisoJS().toDart;
     return res.toDart;
@@ -48,11 +50,9 @@ class SupabaseService {
     _actualizarTituloJS(texto.toJS);
   }
 
-  static void agendarEnCalendarioNativo(String titulo, String descripcion, DateTime fechaUtc) {
-    _agregarAlarmaCalendarioJS(
-      titulo.toJS,
-      descripcion.toJS,
-      fechaUtc.toIso8601String().toJS,
-    );
+  // Método para descargar el reporte PDF generado
+  static void descargarPDF(Uint8List pdfBytes, String nombreArchivo) {
+    final base64Str = base64Encode(pdfBytes);
+    _descargarPDFJS(base64Str.toJS, nombreArchivo.toJS);
   }
 }

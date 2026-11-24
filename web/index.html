@@ -38,7 +38,7 @@
     }
 
     // Desbloquear audio en el primer toque o clic del usuario en cualquier parte
-    ['touchstart', 'click', 'keydown'].forEach(function(evt) {
+    new Array('touchstart', 'click', 'keydown').forEach(function(evt) {
       window.addEventListener(evt, function() {
         const ctx = obtenerAudioCtx();
         if (ctx && ctx.state === 'suspended') {
@@ -64,7 +64,6 @@
         icon: "icons/Icon-192.png",
         badge: "icons/Icon-192.png",
         vibrate: new Array(300, 150, 300),
-
         tag: "agenda-alarma-" + Date.now(),
         renotify: true,
         requireInteraction: true
@@ -91,20 +90,17 @@
 
     // 3. Generador de sonido + vibración física en móvil
     window.reproducirSonidoAlarma = function(urgente) {
-      // Vibrar físicamente en dispositivos móviles
       try {
         if ("vibrate" in navigator) {
-            navigator.vibrate(urgente ? new Array(400, 150, 400, 150, 400) : new Array(300, 150, 300));
-
+          navigator.vibrate(urgente ? new Array(400, 150, 400, 150, 400) : new Array(300, 150, 300));
         }
       } catch (e) {}
 
-      // Reproducir melodía con el AudioContext persistente
       try {
         const ctx = obtenerAudioCtx();
         if (!ctx) return;
 
-        const notas = urgente ? [880, 1108.73, 1318.51, 880, 1318.51] : [523.25, 659.25, 783.99, 1046.50];
+        const notas = urgente ? new Array(880, 1108.73, 1318.51, 880, 1318.51) : new Array(523.25, 659.25, 783.99, 1046.50);
         const ahora = ctx.currentTime;
 
         notas.forEach((freq, i) => {
@@ -132,51 +128,26 @@
       document.title = texto;
     };
 
-    // 5. Generar archivo .ics para agregar alarma nativa al calendario del teléfono (suena con la app cerrada)
-    window.agregarAlarmaCalendarioNativo = function(titulo, descripcion, fechaIsoUtc) {
+    // 5. Descargar archivo PDF generado desde Flutter
+    window.descargarArchivoPDF = function(base64Data, nombreArchivo) {
       try {
-        const inicio = new Date(fechaIsoUtc);
-        const fin = new Date(inicio.getTime() + 15 * 60000); // 15 min de duración
-
-        function formatearICS(d) {
-                return d.toISOString().replace(/[-:]/g, '').split('.').at(0) + 'Z';
-
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
         }
-
-        const tituloLimpio = (titulo || 'Recordatorio Agenda').replace(/\n/g, ' ');
-        const descLimpia = (descripcion || 'Recordatorio programado desde Mi Agenda Interactiva').replace(/\n/g, ' ');
-
-        const contenidoICS = [
-          'BEGIN:VCALENDAR',
-          'VERSION:2.0',
-          'PRODID:-//Mi Agenda Interactiva//ES',
-          'BEGIN:VEVENT',
-          'UID:' + Date.now() + '@miagenda.app',
-          'DTSTAMP:' + formatearICS(new Date()),
-          'DTSTART:' + formatearICS(inicio),
-          'DTEND:' + formatearICS(fin),
-          'SUMMARY:' + tituloLimpio,
-          'DESCRIPTION:' + descLimpia,
-          'BEGIN:VALARM',
-          'TRIGGER:PT0M',
-          'ACTION:DISPLAY',
-          'DESCRIPTION:' + tituloLimpio,
-          'END:VALARM',
-          'END:VEVENT',
-          'END:VCALENDAR'
-        ].join('\r\n');
-
-        const blob = new Blob([contenidoICS], { type: 'text/calendar;charset=utf-8' });
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob(new Array(byteArray), { type: 'application/pdf' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'alarma_agenda.ics';
+        a.download = nombreArchivo || 'reporte_agenda.pdf';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 2000);
       } catch (e) {
-        console.error("Error al generar evento nativo:", e);
+        console.error("Error al descargar PDF:", e);
       }
     };
   </script>
