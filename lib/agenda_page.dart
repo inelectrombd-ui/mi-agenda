@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'supabase_service.dart';
 
@@ -14,7 +17,6 @@ class AgendaPage extends StatefulWidget {
   @override
   State<AgendaPage> createState() => _AgendaPageState();
 }
-
 class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateMixin {
   DateTime _focusedDay = DateTime.now();
   DateTime _selectedDay = DateTime.now();
@@ -33,7 +35,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
   Timer? _repetidorSonido;
   final Set<String> _alarmasEnPantalla = {};
 
-  // Variables de Administrador y Carrusel de Publicidad
   List<Map<String, dynamic>> _usuariosRegistrados = [];
   List<Map<String, dynamic>> _anuncios = [];
   StreamSubscription? _anunciosSub;
@@ -170,11 +171,23 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       ),
     );
   }
+   String? _formatearDestinoAnuncio(String entrada, String tituloAnuncio) {
+    final limpio = entrada.trim();
+    if (limpio.isEmpty) return null;
+    if (limpio.startsWith('http://') || limpio.startsWith('https://')) {
+      return limpio;
+    }
+    return 'https://$limpio';
+  }
+
+
   void _mostrarGestorPublicidad() {
     final titAnuncioCtrl = TextEditingController();
     final subAnuncioCtrl = TextEditingController();
-    final imgAnuncioCtrl = TextEditingController();
-    final linkAnuncioCtrl = TextEditingController();
+    final contactoCtrl = TextEditingController();
+    Uint8List? bytesImagenSeleccionada;
+    String? nombreArchivoSeleccionado;
+    bool subiendo = false;
 
     showDialog(
       context: context,
@@ -224,50 +237,133 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
                     ),
                     const SizedBox(height: 8),
                     TextField(
-                      controller: imgAnuncioCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'URL de Imagen Banner (Opcional)',
-                        hintText: 'https://.../banner.jpg',
+                      controller: contactoCtrl,
+                                           decoration: const InputDecoration(
+                        labelText: 'URL de destino (Opcional)',
+                        hintText: 'https://walmart.com.mx',
+                        prefixIcon: Icon(Icons.link_rounded, color: Color(0xFF0284C7)),
                         isDense: true,
                         border: OutlineInputBorder(),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: linkAnuncioCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Enlace al hacer clic (WhatsApp, Web, etc.)',
-                        hintText: 'https://...',
-                        isDense: true,
-                        border: OutlineInputBorder(),
-                      ),
+
                     ),
                     const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.photo_library_outlined, color: Color(0xFF0284C7)),
+                      label: Text(
+                        nombreArchivoSeleccionado == null
+                            ? 'Elegir imagen del teléfono (Opcional)'
+                            : 'Imagen lista: $nombreArchivoSeleccionado',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 42),
+                        side: const BorderSide(color: Color(0xFF0284C7)),
+                      ),
+                      onPressed: subiendo
+                          ? null
+                          : () async {
+                              final picker = ImagePicker();
+                              final archivo = await picker.pickImage(
+                                source: ImageSource.gallery,
+                                maxWidth: 1200,
+                                imageQuality: 85,
+                              );
+                              if (archivo != null) {
+                                final bytes = await archivo.readAsBytes();
+                                setStateModal(() {
+                                  bytesImagenSeleccionada = bytes;
+                                  nombreArchivoSeleccionado = archivo.name;
+                                });
+                              }
+                            },
+                    ),
+                    if (bytesImagenSeleccionada != null) ...[
+                      const SizedBox(height: 8),
+                      Stack(
+                        alignment: Alignment.topRight,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.memory(
+                              bytesImagenSeleccionada!,
+                              height: 90,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.cancel, color: Colors.red),
+                            onPressed: () => setStateModal(() {
+                              bytesImagenSeleccionada = null;
+                              nombreArchivoSeleccionado = null;
+                            }),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        icon: const Icon(Icons.add_circle_outline),
-                        label: const Text('Publicar Anuncio'),
+                        icon: subiendo
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.add_circle_outline),
+                        label: Text(subiendo ? 'Subiendo banner...' : 'Publicar Anuncio'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF0284C7),
                           foregroundColor: Colors.white,
                         ),
-                        onPressed: () async {
-                          if (titAnuncioCtrl.text.trim().isEmpty) return;
-                          await SupabaseService.client.from('anuncios').insert({
-                            'titulo': titAnuncioCtrl.text.trim(),
-                            'subtitulo': subAnuncioCtrl.text.trim().isEmpty ? null : subAnuncioCtrl.text.trim(),
-                            'imagen_url': imgAnuncioCtrl.text.trim().isEmpty ? null : imgAnuncioCtrl.text.trim(),
-                            'enlace_url': linkAnuncioCtrl.text.trim().isEmpty ? null : linkAnuncioCtrl.text.trim(),
-                            'activo': true,
-                            'orden': _anuncios.length + 1,
-                          });
-                          titAnuncioCtrl.clear();
-                          subAnuncioCtrl.clear();
-                          imgAnuncioCtrl.clear();
-                          linkAnuncioCtrl.clear();
-                          setStateModal(() {});
-                        },
+                        onPressed: subiendo
+                            ? null
+                            : () async {
+                                final titulo = titAnuncioCtrl.text.trim();
+                                if (titulo.isEmpty) return;
+
+                                setStateModal(() => subiendo = true);
+                                String? urlImagenSubida;
+
+                                try {
+                                  if (bytesImagenSeleccionada != null) {
+                                    final ext = (nombreArchivoSeleccionado ?? 'jpg').split('.').last;
+                                    final rutaArchivo = 'banner_${DateTime.now().millisecondsSinceEpoch}.$ext';
+
+                                    await SupabaseService.client.storage.from('banners').uploadBinary(
+                                          rutaArchivo,
+                                          bytesImagenSeleccionada!,
+                                          fileOptions: const FileOptions(upsert: true),
+                                        );
+
+                                    urlImagenSubida =
+                                        SupabaseService.client.storage.from('banners').getPublicUrl(rutaArchivo);
+                                  }
+
+                                  final enlaceFinal = _formatearDestinoAnuncio(contactoCtrl.text, titulo);
+
+                                  await SupabaseService.client.from('anuncios').insert({
+                                    'titulo': titulo,
+                                    'subtitulo': subAnuncioCtrl.text.trim().isEmpty ? null : subAnuncioCtrl.text.trim(),
+                                    'imagen_url': urlImagenSubida,
+                                    'enlace_url': enlaceFinal,
+                                    'activo': true,
+                                    'orden': _anuncios.length + 1,
+                                  });
+
+                                  titAnuncioCtrl.clear();
+                                  subAnuncioCtrl.clear();
+                                  contactoCtrl.clear();
+                                  setStateModal(() {
+                                    bytesImagenSeleccionada = null;
+                                    nombreArchivoSeleccionado = null;
+                                  });
+                                } finally {
+                                  setStateModal(() => subiendo = false);
+                                }
+                              },
                       ),
                     ),
                     const Divider(height: 24),
@@ -729,7 +825,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     return Column(
       children: [
         SizedBox(
-          height: 135,
+          height: 140,
           child: PageView.builder(
             controller: _carruselCtrl,
             itemCount: activos.length,
@@ -1159,6 +1255,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
 
     return scrollable ? SingleChildScrollView(child: contenido) : contenido;
   }
+
   Widget _botonPestana(int indice, String texto) {
     final activa = _vistaSeleccionada == indice;
     return ChoiceChip(
@@ -1176,7 +1273,6 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
       onSelected: (_) => setState(() => _vistaSeleccionada = indice),
     );
   }
-
   Widget _construirTarjetaPendiente(Map<String, dynamic> item, {bool mostrarFechaCompleta = false}) {
     final String id = item['id'].toString();
     final bool completada = item['completada'] ?? false;
