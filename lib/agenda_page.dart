@@ -753,12 +753,11 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     await SupabaseService.client.from('pendientes').delete().eq('id', id);
   }
 
-  Future<void> _guardarNotaRapida() async {
+    Future<void> _guardarNotaRapida() async {
     final titulo = _tituloCtrl.text.trim();
     if (titulo.isEmpty) return;
 
-    SupabaseService.sonarAlarma(urgente: false);
-
+    final descripcion = _descCtrl.text.trim();
     DateTime? fechaFinal;
     final bool conAlarma = _horaAlarmaSeleccionada != null;
 
@@ -770,7 +769,7 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
 
     final data = {
       'titulo': titulo,
-      'descripcion': _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+      'descripcion': descripcion.isEmpty ? null : descripcion,
       'fecha_alarma': fechaFinal?.toUtc().toIso8601String(),
       'tiene_alarma': conAlarma,
       'prioridad': _prioridadSeleccionada,
@@ -786,7 +785,17 @@ class _AgendaPageState extends State<AgendaPage> with SingleTickerProviderStateM
     });
 
     await SupabaseService.client.from('pendientes').insert(data);
+
+    if (conAlarma && fechaFinal != null) {
+      await SupabaseService.pedirPermisoPush();
+      SupabaseService.agendarEnCalendarioNativo(
+        titulo,
+        descripcion.isEmpty ? 'Recordatorio de Mi Agenda Interactiva' : descripcion,
+        fechaFinal.toUtc(),
+      );
+    }
   }
+
   Future<void> _elegirSoloFecha() async {
     final fecha = await showDatePicker(
       context: context,

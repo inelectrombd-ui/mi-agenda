@@ -1,49 +1,52 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="Mi Agenda Interactiva con recordatorios y alarmas.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="mi_agenda">
+  <meta name="apple-mobile-web-app-title" content="Mi Agenda">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>mi_agenda</title>
+  <title>Mi Agenda Interactiva</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
-
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
   <script src="flutter_bootstrap.js" async></script>
 
-    <script>
+  <script>
+    // Motor de audio global persistente (se desbloquea al primer toque en el móvil)
+    window._audioCtx = null;
+    function obtenerAudioCtx() {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return null;
+      if (!window._audioCtx) {
+        window._audioCtx = new AudioCtx();
+      }
+      if (window._audioCtx.state === 'suspended') {
+        window._audioCtx.resume();
+      }
+      return window._audioCtx;
+    }
+
+    // Desbloquear audio en el primer toque o clic del usuario en cualquier parte
+    ['touchstart', 'click', 'keydown'].forEach(function(evt) {
+      window.addEventListener(evt, function() {
+        const ctx = obtenerAudioCtx();
+        if (ctx && ctx.state === 'suspended') {
+          ctx.resume();
+        }
+      }, { passive: true });
+    });
+
     // 1. Solicitar permiso de notificaciones push
     window.solicitarPermisoNotificacion = async function() {
       if (!("Notification" in window)) return "unsupported";
@@ -52,40 +55,75 @@
       return permission;
     };
 
-    // 2. Disparar notificación push nativa del sistema
-    window.mostrarNotificacionPush = function(titulo, cuerpo) {
-      if ("Notification" in window && Notification.permission === "granted") {
-        new Notification(titulo, {
-          body: cuerpo,
-          tag: "agenda-alarma"
-        });
+    // 2. Disparar notificación push nativa (compatible con Android PWA vía Service Worker)
+    window.mostrarNotificacionPush = async function(titulo, cuerpo) {
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+
+      const opciones = {
+        body: cuerpo,
+        icon: "icons/Icon-192.png",
+        badge: "icons/Icon-192.png",
+        vibrate: new Array(300, 150, 300),
+
+        tag: "agenda-alarma-" + Date.now(),
+        renotify: true,
+        requireInteraction: true
+      };
+
+      try {
+        if ("serviceWorker" in navigator) {
+          const reg = await navigator.serviceWorker.ready;
+          if (reg && reg.showNotification) {
+            await reg.showNotification(titulo, opciones);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn("Fallback a Notification estándar:", e);
+      }
+
+      try {
+        new Notification(titulo, opciones);
+      } catch (e) {
+        console.warn("No se pudo mostrar notificación:", e);
       }
     };
 
-    // 3. Generador de sonido limpio tipo campana/marimba (Web Audio API)
+    // 3. Generador de sonido + vibración física en móvil
     window.reproducirSonidoAlarma = function(urgente) {
+      // Vibrar físicamente en dispositivos móviles
       try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        const ctx = new AudioCtx();
-        const notas = urgente ? [880, 1108.73, 1318.51, 880] : [523.25, 659.25, 783.99];
-        
+        if ("vibrate" in navigator) {
+            navigator.vibrate(urgente ? new Array(400, 150, 400, 150, 400) : new Array(300, 150, 300));
+
+        }
+      } catch (e) {}
+
+      // Reproducir melodía con el AudioContext persistente
+      try {
+        const ctx = obtenerAudioCtx();
+        if (!ctx) return;
+
+        const notas = urgente ? [880, 1108.73, 1318.51, 880, 1318.51] : [523.25, 659.25, 783.99, 1046.50];
+        const ahora = ctx.currentTime;
+
         notas.forEach((freq, i) => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = urgente ? 'triangle' : 'sine';
-          osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.18);
-          
-          gain.gain.setValueAtTime(0.001, ctx.currentTime + i * 0.18);
-          gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + i * 0.18 + 0.03);
-          gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + i * 0.18 + 0.55);
-          
+          osc.frequency.setValueAtTime(freq, ahora + i * 0.16);
+
+          gain.gain.setValueAtTime(0.001, ahora + i * 0.16);
+          gain.gain.exponentialRampToValueAtTime(0.45, ahora + i * 0.16 + 0.03);
+          gain.gain.exponentialRampToValueAtTime(0.0001, ahora + i * 0.16 + 0.5);
+
           osc.connect(gain);
           gain.connect(ctx.destination);
-          osc.start(ctx.currentTime + i * 0.18);
-          osc.stop(ctx.currentTime + i * 0.18 + 0.6);
+          osc.start(ahora + i * 0.16);
+          osc.stop(ahora + i * 0.16 + 0.55);
         });
       } catch (e) {
-        console.warn("Audio bloqueado hasta interacción:", e);
+        console.warn("Audio bloqueado:", e);
       }
     };
 
@@ -93,8 +131,54 @@
     window.actualizarTituloPestana = function(texto) {
       document.title = texto;
     };
+
+    // 5. Generar archivo .ics para agregar alarma nativa al calendario del teléfono (suena con la app cerrada)
+    window.agregarAlarmaCalendarioNativo = function(titulo, descripcion, fechaIsoUtc) {
+      try {
+        const inicio = new Date(fechaIsoUtc);
+        const fin = new Date(inicio.getTime() + 15 * 60000); // 15 min de duración
+
+        function formatearICS(d) {
+                return d.toISOString().replace(/[-:]/g, '').split('.').at(0) + 'Z';
+
+        }
+
+        const tituloLimpio = (titulo || 'Recordatorio Agenda').replace(/\n/g, ' ');
+        const descLimpia = (descripcion || 'Recordatorio programado desde Mi Agenda Interactiva').replace(/\n/g, ' ');
+
+        const contenidoICS = [
+          'BEGIN:VCALENDAR',
+          'VERSION:2.0',
+          'PRODID:-//Mi Agenda Interactiva//ES',
+          'BEGIN:VEVENT',
+          'UID:' + Date.now() + '@miagenda.app',
+          'DTSTAMP:' + formatearICS(new Date()),
+          'DTSTART:' + formatearICS(inicio),
+          'DTEND:' + formatearICS(fin),
+          'SUMMARY:' + tituloLimpio,
+          'DESCRIPTION:' + descLimpia,
+          'BEGIN:VALARM',
+          'TRIGGER:PT0M',
+          'ACTION:DISPLAY',
+          'DESCRIPTION:' + tituloLimpio,
+          'END:VALARM',
+          'END:VEVENT',
+          'END:VCALENDAR'
+        ].join('\r\n');
+
+        const blob = new Blob([contenidoICS], { type: 'text/calendar;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'alarma_agenda.ics';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      } catch (e) {
+        console.error("Error al generar evento nativo:", e);
+      }
+    };
   </script>
 </body>
-
-
 </html>
